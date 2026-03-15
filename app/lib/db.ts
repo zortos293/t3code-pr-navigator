@@ -414,6 +414,6 @@ export const analysisJobs = {
   },
 
   getByRepoId(repoId: number): AnalysisJob[] {
-    return getDb().prepare('SELECT * FROM analysis_jobs WHERE repo_id = ? ORDER BY started_at DESC').all(repoId) as AnalysisJob[];
+    return getDb().prepare('SELECT * FROM analysis_jobs WHERE repo_id = ? ORDER BY id DESC').all(repoId) as AnalysisJob[];
   },
 };
