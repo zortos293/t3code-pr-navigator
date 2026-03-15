@@ -6,15 +6,18 @@ import ThemeToggle from './components/ThemeToggle';
 import RepoForm from './components/RepoForm';
 import Sidebar from './components/Sidebar';
 import Board from './components/Board';
+import ToastContainer from './components/Toast/ToastContainer';
 import { useRepos } from './hooks/useRepos';
 import { useBoard } from './hooks/useBoard';
+import { useSyncProgress } from './hooks/useSyncProgress';
 
 export default function Home() {
   const [selectedRepoId, setSelectedRepoId] = useState<number | null>(null);
   const [syncingId, setSyncingId] = useState<number | null>(null);
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
 
-  const { repos, addRepo, deleteRepo, syncRepo, analyzeRepo, refresh: refreshRepos } = useRepos();
+  const syncProgress = useSyncProgress();
+  const { repos, addRepo, deleteRepo, syncRepo, analyzeRepo, refresh: refreshRepos } = useRepos(syncProgress);
   const board = useBoard(selectedRepoId);
 
   const handleAdd = useCallback(async (url: string) => {
@@ -31,7 +34,9 @@ export default function Home() {
     setSyncingId(id);
     try {
       await syncRepo(id);
-      if (selectedRepoId === id) board.refresh();
+      if (selectedRepoId === id) {
+        await board.refresh();
+      }
     } finally {
       setSyncingId(null);
     }
@@ -52,7 +57,6 @@ export default function Home() {
 
   return (
     <div className="h-screen flex flex-col">
-      {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
         <div className="flex items-center gap-2">
           <LayoutDashboard size={20} className="text-blue-600 dark:text-blue-400" />
@@ -81,9 +85,7 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main */}
       <div className="flex flex-1 min-h-0">
-        {/* Sidebar */}
         <aside className="w-72 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col shrink-0">
           <RepoForm onAdd={handleAdd} />
           <Sidebar
@@ -98,7 +100,6 @@ export default function Home() {
           />
         </aside>
 
-        {/* Board */}
         <main className="flex-1 min-w-0 relative">
           {!selectedRepoId ? (
             <div className="h-full flex items-center justify-center">
@@ -153,6 +154,8 @@ export default function Home() {
           )}
         </main>
       </div>
+
+      <ToastContainer toasts={syncProgress.toasts} />
     </div>
   );
 }

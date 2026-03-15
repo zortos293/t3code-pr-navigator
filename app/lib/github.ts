@@ -44,6 +44,13 @@ export type GitHubPR = {
   closed_at: string | null;
 };
 
+type SyncProgressCallback = (
+  type: 'issue' | 'pr',
+  current: number,
+  total: number,
+  item: GitHubIssue | GitHubPR,
+) => void | Promise<void>;
+
 export function parseGitHubUrl(url: string): { owner: string; name: string } | null {
   const patterns = [
     /github\.com\/([^/]+)\/([^/\s?#]+)/,
@@ -162,7 +169,12 @@ export async function fetchPRDetails(owner: string, name: string, prNumber: numb
   };
 }
 
-export async function syncRepository(repoId: number, owner: string, name: string) {
+export async function syncRepository(
+  repoId: number,
+  owner: string,
+  name: string,
+  onProgress?: SyncProgressCallback,
+) {
   const { repos, issues: issuesDb, pullRequests: prsDb } = await import('./db');
 
   const repoData = await fetchRepository(owner, name);
@@ -178,7 +190,7 @@ export async function syncRepository(repoId: number, owner: string, name: string
     open_prs_count: ghPRs.length,
   });
 
-  for (const issue of ghIssues) {
+  for (const [index, issue] of ghIssues.entries()) {
     issuesDb.upsert({
       repo_id: repoId,
       github_number: issue.number,
@@ -192,14 +204,14 @@ export async function syncRepository(repoId: number, owner: string, name: string
       updated_at: issue.updated_at,
       closed_at: issue.closed_at,
     });
+    await onProgress?.('issue', index + 1, ghIssues.length, issue);
   }
 
-  for (const pr of ghPRs) {
+  for (const [index, pr] of ghPRs.entries()) {
     let details = { additions: 0, deletions: 0, changed_files: 0 };
     try {
       details = await fetchPRDetails(owner, name, pr.number);
     } catch {
-      // rate limit or error — keep zeros
     }
 
     prsDb.upsert({
@@ -220,6 +232,7 @@ export async function syncRepository(repoId: number, owner: string, name: string
       merged_at: pr.merged_at,
       closed_at: pr.closed_at,
     });
+    await onProgress?.('pr', index + 1, ghPRs.length, pr);
   }
 
   return {
