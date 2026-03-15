@@ -44,6 +44,13 @@ export type GitHubPR = {
   closed_at: string | null;
 };
 
+type SyncProgressCallback = (
+  type: 'issue' | 'pr',
+  current: number,
+  total: number,
+  item: GitHubIssue | GitHubPR,
+) => void | Promise<void>;
+
 export function parseGitHubUrl(url: string): { owner: string; name: string } | null {
   const patterns = [
     /github\.com\/([^/]+)\/([^/\s?#]+)/,
@@ -182,7 +189,12 @@ export function extractIssueReferences(text: string): { issueNumber: number; typ
   return results;
 }
 
-export async function syncRepository(repoId: number, owner: string, name: string) {
+export async function syncRepository(
+  repoId: number,
+  owner: string,
+  name: string,
+  onProgress?: SyncProgressCallback,
+) {
   const { repos, issues: issuesDb, pullRequests: prsDb, relationships: relationshipsDb } = await import('./db');
 
   const repoData = await fetchRepository(owner, name);
@@ -199,7 +211,7 @@ export async function syncRepository(repoId: number, owner: string, name: string
   });
 
   const issueMap = new Map<number, number>();
-  for (const issue of ghIssues) {
+  for (const [index, issue] of ghIssues.entries()) {
     const dbIssue = issuesDb.upsert({
       repo_id: repoId,
       github_number: issue.number,
@@ -214,15 +226,15 @@ export async function syncRepository(repoId: number, owner: string, name: string
       closed_at: issue.closed_at,
     });
     issueMap.set(issue.number, dbIssue.id);
+    await onProgress?.('issue', index + 1, ghIssues.length, issue);
   }
 
   const prMap = new Map<number, number>();
-  for (const pr of ghPRs) {
+  for (const [index, pr] of ghPRs.entries()) {
     let details = { additions: 0, deletions: 0, changed_files: 0 };
     try {
       details = await fetchPRDetails(owner, name, pr.number);
     } catch {
-      // rate limit or error — keep zeros
     }
 
     const dbPR = prsDb.upsert({
@@ -244,6 +256,7 @@ export async function syncRepository(repoId: number, owner: string, name: string
       closed_at: pr.closed_at,
     });
     prMap.set(pr.number, dbPR.id);
+    await onProgress?.('pr', index + 1, ghPRs.length, pr);
   }
 
   for (const pr of ghPRs) {
