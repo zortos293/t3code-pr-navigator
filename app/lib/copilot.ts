@@ -33,7 +33,7 @@ async function callCopilotAPI(prompt: string): Promise<string> {
         },
         { role: 'user', content: prompt },
       ],
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       temperature: 0.1,
     }),
   });
