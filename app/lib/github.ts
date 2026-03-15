@@ -162,8 +162,20 @@ export async function fetchPRDetails(owner: string, name: string, prNumber: numb
   };
 }
 
+export function parseReferences(text: string): number[] {
+  if (!text) return [];
+  const refs: number[] = [];
+  const regex = /(?:fixes|closes|resolves|fix|close|resolve|fixed|related\s+to|see\s+(?:pr\s+)?|addressed\s+in|fixed\s+by)?\s*#(\d+)/gi;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const num = parseInt(match[1], 10);
+    if (num > 0) refs.push(num);
+  }
+  return [...new Set(refs)];
+}
+
 export async function syncRepository(repoId: number, owner: string, name: string) {
-  const { repos, issues: issuesDb, pullRequests: prsDb } = await import('./db');
+  const { repos, issues: issuesDb, pullRequests: prsDb, relationships: relsDb } = await import('./db');
 
   const repoData = await fetchRepository(owner, name);
   const [ghIssues, ghPRs] = await Promise.all([
@@ -220,6 +232,47 @@ export async function syncRepository(repoId: number, owner: string, name: string
       merged_at: pr.merged_at,
       closed_at: pr.closed_at,
     });
+  }
+
+  const issueNumbers = new Set(ghIssues.map((i) => i.number));
+  const prNumbers = new Set(ghPRs.map((p) => p.number));
+
+  for (const pr of ghPRs) {
+    const text = [pr.title, pr.body ?? ''].join(' ');
+    const refs = parseReferences(text);
+    for (const refNum of refs) {
+      if (issueNumbers.has(refNum)) {
+        const dbIssue = issuesDb.getByRepoAndNumber(repoId, refNum);
+        const dbPR = prsDb.getByRepoAndNumber(repoId, pr.number);
+        if (dbIssue && dbPR) {
+          relsDb.create({
+            issue_id: dbIssue.id,
+            pr_id: dbPR.id,
+            relationship_type: 'solves',
+            confidence: 1.0,
+          });
+        }
+      }
+    }
+  }
+
+  for (const issue of ghIssues) {
+    const text = [issue.title, issue.body ?? ''].join(' ');
+    const refs = parseReferences(text);
+    for (const refNum of refs) {
+      if (prNumbers.has(refNum)) {
+        const dbIssue = issuesDb.getByRepoAndNumber(repoId, issue.number);
+        const dbPR = prsDb.getByRepoAndNumber(repoId, refNum);
+        if (dbIssue && dbPR) {
+          relsDb.create({
+            issue_id: dbIssue.id,
+            pr_id: dbPR.id,
+            relationship_type: 'solves',
+            confidence: 1.0,
+          });
+        }
+      }
+    }
   }
 
   return {

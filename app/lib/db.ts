@@ -247,6 +247,10 @@ export const issues = {
     return getDb().prepare('SELECT * FROM issues WHERE id = ?').get(id) as Issue | undefined;
   },
 
+  getByRepoAndNumber(repoId: number, githubNumber: number): Issue | undefined {
+    return getDb().prepare('SELECT * FROM issues WHERE repo_id = ? AND github_number = ?').get(repoId, githubNumber) as Issue | undefined;
+  },
+
   upsert(issue: Omit<Issue, 'id'>): Issue {
     const stmt = getDb().prepare(`
       INSERT INTO issues (repo_id, github_number, title, body, state, author, author_avatar, labels, created_at, updated_at, closed_at)
@@ -281,6 +285,10 @@ export const pullRequests = {
 
   getById(id: number): PullRequest | undefined {
     return getDb().prepare('SELECT * FROM pull_requests WHERE id = ?').get(id) as PullRequest | undefined;
+  },
+
+  getByRepoAndNumber(repoId: number, githubNumber: number): PullRequest | undefined {
+    return getDb().prepare('SELECT * FROM pull_requests WHERE repo_id = ? AND github_number = ?').get(repoId, githubNumber) as PullRequest | undefined;
   },
 
   upsert(pr: Omit<PullRequest, 'id'>): PullRequest {
