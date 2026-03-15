@@ -14,7 +14,7 @@ export default function Home() {
   const [syncingId, setSyncingId] = useState<number | null>(null);
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
 
-  const { repos, addRepo, deleteRepo, syncRepo, analyzeRepo, refresh: refreshRepos } = useRepos();
+  const { repos, analysisProgress, addRepo, deleteRepo, syncRepo, analyzeRepo, refresh: refreshRepos } = useRepos();
   const board = useBoard(selectedRepoId);
 
   const handleAdd = useCallback(async (url: string) => {
@@ -95,6 +95,7 @@ export default function Home() {
             onAnalyze={handleAnalyze}
             syncingId={syncingId}
             analyzingId={analyzingId}
+            analysisProgress={analysisProgress}
           />
         </aside>
 
