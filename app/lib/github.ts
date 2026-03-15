@@ -169,13 +169,33 @@ export async function fetchPRDetails(owner: string, name: string, prNumber: numb
   };
 }
 
+const SOLVES_KEYWORDS = new Set(['fixes', 'fix', 'closes', 'close', 'resolves', 'resolve']);
+
+export function extractIssueReferences(text: string): { issueNumber: number; type: 'solves' | 'relates' }[] {
+  const pattern = /(fixes|fix|closes|close|resolves|resolve|relates\s+to|related\s+to|addresses|refs|references)\s+(?:#|https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/)(\d+)/gi;
+  const results: { issueNumber: number; type: 'solves' | 'relates' }[] = [];
+  const seen = new Set<number>();
+
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const issueNumber = parseInt(match[2], 10);
+    if (seen.has(issueNumber)) continue;
+    seen.add(issueNumber);
+    const keyword = match[1].replace(/\s+/g, ' ').toLowerCase();
+    const type = SOLVES_KEYWORDS.has(keyword) ? 'solves' : 'relates';
+    results.push({ issueNumber, type });
+  }
+
+  return results;
+}
+
 export async function syncRepository(
   repoId: number,
   owner: string,
   name: string,
   onProgress?: SyncProgressCallback,
 ) {
-  const { repos, issues: issuesDb, pullRequests: prsDb } = await import('./db');
+  const { repos, issues: issuesDb, pullRequests: prsDb, relationships: relationshipsDb } = await import('./db');
 
   const repoData = await fetchRepository(owner, name);
   const [ghIssues, ghPRs] = await Promise.all([
@@ -190,8 +210,9 @@ export async function syncRepository(
     open_prs_count: ghPRs.length,
   });
 
+  const issueMap = new Map<number, number>();
   for (const [index, issue] of ghIssues.entries()) {
-    issuesDb.upsert({
+    const dbIssue = issuesDb.upsert({
       repo_id: repoId,
       github_number: issue.number,
       title: issue.title,
@@ -204,9 +225,11 @@ export async function syncRepository(
       updated_at: issue.updated_at,
       closed_at: issue.closed_at,
     });
+    issueMap.set(issue.number, dbIssue.id);
     await onProgress?.('issue', index + 1, ghIssues.length, issue);
   }
 
+  const prMap = new Map<number, number>();
   for (const [index, pr] of ghPRs.entries()) {
     let details = { additions: 0, deletions: 0, changed_files: 0 };
     try {
@@ -214,7 +237,7 @@ export async function syncRepository(
     } catch {
     }
 
-    prsDb.upsert({
+    const dbPR = prsDb.upsert({
       repo_id: repoId,
       github_number: pr.number,
       title: pr.title,
@@ -232,7 +255,27 @@ export async function syncRepository(
       merged_at: pr.merged_at,
       closed_at: pr.closed_at,
     });
+    prMap.set(pr.number, dbPR.id);
     await onProgress?.('pr', index + 1, ghPRs.length, pr);
+  }
+
+  for (const pr of ghPRs) {
+    const text = pr.title + ' ' + (pr.body || '');
+    const refs = extractIssueReferences(text);
+    const prDbId = prMap.get(pr.number);
+    if (!prDbId) continue;
+
+    for (const ref of refs) {
+      const issueDbId = issueMap.get(ref.issueNumber);
+      if (issueDbId) {
+        relationshipsDb.create({
+          issue_id: issueDbId,
+          pr_id: prDbId,
+          relationship_type: ref.type,
+          confidence: 1.0,
+        });
+      }
+    }
   }
 
   return {

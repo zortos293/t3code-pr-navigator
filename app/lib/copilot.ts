@@ -1,4 +1,4 @@
-import type { Issue, PullRequest } from './db';
+import { analysisJobs, type Issue, type PullRequest } from './db';
 
 type AnalysisResult = {
   solves: boolean;
@@ -33,7 +33,7 @@ async function callCopilotAPI(prompt: string): Promise<string> {
         },
         { role: 'user', content: prompt },
       ],
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       temperature: 0.1,
     }),
   });
@@ -104,10 +104,12 @@ Respond with JSON: { "isDuplicate": boolean, "confidence": number (0-1), "reason
   }
 }
 
-export async function runAnalysis(repoId: number) {
-  const { issues: issuesDb, pullRequests: prsDb, relationships: relsDb, duplicates: dupsDb, analysisJobs } = await import('./db');
+const _sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-  const job = analysisJobs.create(repoId, 'analyze');
+export async function runAnalysis(repoId: number, jobId?: number) {
+  const { issues: issuesDb, pullRequests: prsDb, relationships: relsDb, duplicates: dupsDb } = await import('./db');
+
+  const analysisJobId = jobId ?? analysisJobs.create(repoId, 'analyze').id;
   const allIssues = issuesDb.getByRepoId(repoId);
   const allPRs = prsDb.getByRepoId(repoId);
 
@@ -129,9 +131,10 @@ export async function runAnalysis(repoId: number) {
           });
         }
         completed++;
-        analysisJobs.update(job.id, {
+        analysisJobs.update(analysisJobId, {
           progress: Math.round((completed / totalWork) * 100),
         });
+        await _sleep(700);
       }
     }
 
@@ -147,26 +150,27 @@ export async function runAnalysis(repoId: number) {
           });
         }
         completed++;
-        analysisJobs.update(job.id, {
+        analysisJobs.update(analysisJobId, {
           progress: Math.round((completed / totalWork) * 100),
         });
+        await _sleep(700);
       }
     }
 
-    analysisJobs.update(job.id, {
+    analysisJobs.update(analysisJobId, {
       status: 'completed',
       progress: 100,
       completed_at: new Date().toISOString(),
     });
   } catch (error) {
-    analysisJobs.update(job.id, {
+    analysisJobs.update(analysisJobId, {
       status: 'failed',
       error: String(error),
       completed_at: new Date().toISOString(),
     });
   }
 
-  return job;
+  return analysisJobs.getByRepoId(repoId).find((job) => job.id === analysisJobId);
 }
 
 export function isCopilotConfigured(): boolean {
