@@ -3,6 +3,7 @@ import { analysisJobs, repos } from '@/app/lib/db';
 import { runAnalysis, isCopilotConfigured } from '@/app/lib/copilot';
 
 type Params = { params: Promise<{ id: string }> };
+export const runtime = 'nodejs';
 
 export async function POST(_request: NextRequest, { params }: Params) {
   try {
@@ -18,9 +19,9 @@ export async function POST(_request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
     }
 
-    if (!isCopilotConfigured()) {
+    if (!(await isCopilotConfigured())) {
       return NextResponse.json(
-        { error: 'Copilot API is not configured. Set COPILOT_TOKEN in environment variables.' },
+        { error: 'Copilot SDK is not configured. Set COPILOT_TOKEN or authenticate GitHub Copilot CLI.' },
         { status: 400 }
       );
     }

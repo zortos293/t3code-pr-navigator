@@ -8,7 +8,7 @@ import {
 } from '../lib/copilot';
 import type { Issue, PullRequest } from '../lib/db';
 
-function createIssue(number: number): Issue {
+function createIssue(number: number, overrides: Partial<Issue> = {}): Issue {
   return {
     id: number,
     repo_id: 1,
@@ -22,10 +22,11 @@ function createIssue(number: number): Issue {
     created_at: null,
     updated_at: null,
     closed_at: null,
+    ...overrides,
   };
 }
 
-function createPullRequest(number: number): PullRequest {
+function createPullRequest(number: number, overrides: Partial<PullRequest> = {}): PullRequest {
   return {
     id: number,
     repo_id: 1,
@@ -44,6 +45,7 @@ function createPullRequest(number: number): PullRequest {
     updated_at: null,
     merged_at: null,
     closed_at: null,
+    ...overrides,
   };
 }
 
@@ -58,31 +60,31 @@ describe('chunkItems', () => {
 });
 
 describe('relationship batching', () => {
-  it('creates bulk PR batches while keeping the smaller issue list together', () => {
-    const issues = Array.from({ length: 45 }, (_, index) => createIssue(index + 1));
-    const pullRequests = Array.from({ length: 205 }, (_, index) => createPullRequest(index + 1));
+  it('creates bulk PR batches while keeping the smaller issue list together when prompts are too large', () => {
+    const issues = Array.from({ length: 2 }, (_, index) => createIssue(index + 1));
+    const pullRequests = Array.from({ length: 400 }, (_, index) => createPullRequest(index + 1));
 
     const batches = buildRelationshipAnalysisBatches(issues, pullRequests, 100);
 
-    expect(batches).toHaveLength(3);
-    expect(batches[0].issues).toHaveLength(45);
+    expect(batches).toHaveLength(4);
+    expect(batches[0].issues).toHaveLength(2);
     expect(batches[0].pullRequests).toHaveLength(100);
-    expect(batches[2].issues).toHaveLength(45);
-    expect(batches[2].pullRequests).toHaveLength(5);
+    expect(batches[3].issues).toHaveLength(2);
+    expect(batches[3].pullRequests).toHaveLength(100);
   });
 });
 
 describe('duplicate batching', () => {
-  it('creates primary chunks against the full issue list', () => {
-    const issues = Array.from({ length: 205 }, (_, index) => createIssue(index + 1));
+  it('creates chunk-pair batches instead of comparing every chunk against the full issue list', () => {
+    const issues = Array.from({ length: 400 }, (_, index) => createIssue(index + 1));
 
     const batches = buildDuplicateAnalysisBatches(issues, 100);
 
-    expect(batches).toHaveLength(3);
+    expect(batches).toHaveLength(10);
     expect(batches[0].primaryIssues).toHaveLength(100);
-    expect(batches[0].comparisonIssues).toHaveLength(205);
-    expect(batches[2].primaryIssues).toHaveLength(5);
-    expect(batches[2].comparisonIssues).toHaveLength(205);
+    expect(batches[0].comparisonIssues).toHaveLength(100);
+    expect(batches[9].primaryIssues).toHaveLength(100);
+    expect(batches[9].comparisonIssues).toHaveLength(100);
   });
 });
 

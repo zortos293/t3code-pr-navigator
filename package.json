@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "postinstall": "node scripts/fix-vscode-jsonrpc.mjs",
     "lint": "bun run lint:oxlint && bun run lint:eslint",
     "lint:oxlint": "oxlint --react-plugin --vitest-plugin --nextjs-plugin --jsx-a11y-plugin .",
     "lint:eslint": "eslint . --ext .js,.jsx,.ts,.tsx",
@@ -14,6 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@github/copilot-sdk": "^0.1.32",
     "@octokit/rest": "^22.0.1",
     "@xyflow/react": "^12.0.0",
     "better-sqlite3": "^12.8.0",

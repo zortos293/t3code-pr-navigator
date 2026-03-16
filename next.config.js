@@ -9,7 +9,7 @@ const nextConfig = {
       },
     ],
   },
-  serverExternalPackages: ['better-sqlite3'],
+  serverExternalPackages: ['better-sqlite3', '@github/copilot-sdk', '@github/copilot', 'vscode-jsonrpc'],
 };
 
 module.exports = nextConfig;
