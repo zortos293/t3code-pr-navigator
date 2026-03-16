@@ -19,7 +19,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const repoId = parseInt(id, 10);
-    const repo = await repos.getById(repoId);
+    const repo = repos.getById(repoId);
 
     if (!repo) {
       return new Response(JSON.stringify({ error: 'Repository not found' }), {
@@ -42,7 +42,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
             })));
           });
 
-          await repos.update(repoId, {
+          repos.update(repoId, {
             open_issues_count: counts.issues,
             open_prs_count: counts.pullRequests,
           });

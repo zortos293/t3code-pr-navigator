@@ -64,7 +64,6 @@ type AnalysisJob = {
 };
 
 type AnalysisProgress = Record<number, { progress: number; status: string }>;
-type RepoAnalysisJob = { repoId: number; job: AnalysisJob | null };
 
 export function useRepos(syncProgress?: SyncProgressHandlers) {
   const [repos, setRepos] = useState<RepoSummary[]>([]);
@@ -87,6 +86,10 @@ export function useRepos(syncProgress?: SyncProgressHandlers) {
     }
   }, []);
 
+  useEffect(() => {
+    fetchRepos();
+  }, [fetchRepos]);
+
   const stopPolling = useCallback((repoId: number) => {
     const intervalId = pollingIntervals.current[repoId];
     if (intervalId) {
@@ -107,7 +110,7 @@ export function useRepos(syncProgress?: SyncProgressHandlers) {
       cache: 'no-store',
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to fetch OpenCode analysis progress');
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch analysis progress');
     return data as AnalysisJob | null;
   }, []);
 
@@ -231,7 +234,7 @@ export function useRepos(syncProgress?: SyncProgressHandlers) {
             }
           }
         } catch (err) {
-          const error = err instanceof Error ? err : new Error('Failed to poll OpenCode analysis progress');
+          const error = err instanceof Error ? err : new Error('Failed to poll analysis progress');
           settle(() => reject(error));
         } finally {
           inFlight = false;
@@ -244,61 +247,6 @@ export function useRepos(syncProgress?: SyncProgressHandlers) {
       }, 1000);
     });
   }, [fetchLatestAnalysisJob, stopPolling]);
-
-  const restoreAnalysisProgress = useCallback(async (repoList: RepoSummary[]) => {
-    if (repoList.length === 0) {
-      setAnalysisProgress({});
-      return;
-    }
-
-    const results = await Promise.all(
-      repoList.map(async (repo): Promise<RepoAnalysisJob> => {
-        try {
-          return { repoId: repo.id, job: await fetchLatestAnalysisJob(repo.id) };
-        } catch {
-          return { repoId: repo.id, job: null };
-        }
-      })
-    );
-
-    setAnalysisProgress((current) => {
-      const next: AnalysisProgress = {};
-
-      for (const { repoId, job } of results) {
-        if (!job) {
-          if (current[repoId]?.status === 'running') {
-            next[repoId] = current[repoId];
-          }
-          continue;
-        }
-
-        if (job.status !== 'completed') {
-          next[repoId] = {
-            progress: job.progress,
-            status: job.status,
-          };
-        }
-      }
-
-      return next;
-    });
-
-    for (const { repoId, job } of results) {
-      if (job?.status === 'running') {
-        void pollAnalysisProgress(repoId, job.id).catch(() => undefined);
-      } else {
-        stopPolling(repoId);
-      }
-    }
-  }, [fetchLatestAnalysisJob, pollAnalysisProgress, stopPolling]);
-
-  useEffect(() => {
-    fetchRepos();
-  }, [fetchRepos]);
-
-  useEffect(() => {
-    void restoreAnalysisProgress(repos);
-  }, [repos, restoreAnalysisProgress]);
 
   const analyzeRepo = useCallback(async (id: number) => {
     stopPolling(id);
@@ -313,7 +261,7 @@ export function useRepos(syncProgress?: SyncProgressHandlers) {
     try {
       const res = await fetch(`/api/repos/${id}/analyze`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to run OpenCode analysis');
+      if (!res.ok) throw new Error(data.error || 'Failed to analyze repository');
       if (data.job) {
         setAnalysisProgress((current) => ({
           ...current,
@@ -327,11 +275,11 @@ export function useRepos(syncProgress?: SyncProgressHandlers) {
       const finalJob = await pollAnalysisProgress(id, data.job?.id);
 
       if (!finalJob) {
-        throw new Error('OpenCode analysis job did not start');
+        throw new Error('Analysis job did not start');
       }
 
       if (finalJob.status === 'failed') {
-        throw new Error(finalJob.error || 'OpenCode analysis failed');
+        throw new Error(finalJob.error || 'Analysis failed');
       }
 
       return finalJob;

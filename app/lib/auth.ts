@@ -10,8 +10,8 @@ import {
   verifyPassword,
 } from './authUtils';
 
-async function clearExpiredSessions(now = new Date().toISOString()) {
-  await authSessions.clearExpired(now);
+function clearExpiredSessions(now = new Date().toISOString()) {
+  authSessions.clearExpired(now);
 }
 
 function buildCookieOptions() {
@@ -28,37 +28,37 @@ export function authenticatePassword(password: string): boolean {
   return verifyPassword(password, resolvePasswordHash());
 }
 
-export async function createAuthSession(): Promise<string> {
-  await clearExpiredSessions();
+export function createAuthSession(): string {
+  clearExpiredSessions();
   const token = createSessionToken();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
-  await authSessions.create(hashSessionToken(token), expiresAt);
+  authSessions.create(hashSessionToken(token), expiresAt);
   return token;
 }
 
-export async function revokeAuthSession(token: string | undefined): Promise<void> {
+export function revokeAuthSession(token: string | undefined): void {
   if (!token) {
     return;
   }
 
-  await authSessions.deleteByTokenHash(hashSessionToken(token));
+  authSessions.deleteByTokenHash(hashSessionToken(token));
 }
 
-export async function isAuthenticatedToken(token: string | undefined): Promise<boolean> {
+export function isAuthenticatedToken(token: string | undefined): boolean {
   if (!token) {
     return false;
   }
 
-  await clearExpiredSessions();
+  clearExpiredSessions();
 
-  const session = await authSessions.getByTokenHash(hashSessionToken(token));
+  const session = authSessions.getByTokenHash(hashSessionToken(token));
   if (!session) {
     return false;
   }
 
   if (Date.parse(session.expires_at) <= Date.now()) {
-    await authSessions.deleteByTokenHash(session.token_hash);
+    authSessions.deleteByTokenHash(session.token_hash);
     return false;
   }
 
@@ -67,7 +67,7 @@ export async function isAuthenticatedToken(token: string | undefined): Promise<b
 
 export async function isAuthenticated(): Promise<boolean> {
   const cookieStore = await cookies();
-  return await isAuthenticatedToken(cookieStore.get(SESSION_COOKIE_NAME)?.value);
+  return isAuthenticatedToken(cookieStore.get(SESSION_COOKIE_NAME)?.value);
 }
 
 export function attachSessionCookie(response: NextResponse, token: string): NextResponse {
@@ -83,8 +83,8 @@ export function clearSessionCookie(response: NextResponse): NextResponse {
   return response;
 }
 
-export async function requireApiAuth(request: NextRequest): Promise<NextResponse | null> {
-  if (await isAuthenticatedToken(request.cookies.get(SESSION_COOKIE_NAME)?.value)) {
+export function requireApiAuth(request: NextRequest): NextResponse | null {
+  if (isAuthenticatedToken(request.cookies.get(SESSION_COOKIE_NAME)?.value)) {
     return null;
   }
 

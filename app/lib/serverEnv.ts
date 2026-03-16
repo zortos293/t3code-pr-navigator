@@ -46,15 +46,13 @@ export function loadLocalEnv(): void {
   }
 
   didLoadLocalEnv = true;
-  for (const envFileName of ['.local.env', '.env.local', '.env']) {
-    const envPath = path.resolve(process.cwd(), envFileName);
-    if (!fs.existsSync(envPath)) {
-      continue;
-    }
+  const envPath = path.resolve(process.cwd(), '.local.env');
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
 
-    const contents = fs.readFileSync(envPath, 'utf8');
-    for (const line of contents.split(/\r?\n/)) {
-      applyEnvLine(line);
-    }
+  const contents = fs.readFileSync(envPath, 'utf8');
+  for (const line of contents.split(/\r?\n/)) {
+    applyEnvLine(line);
   }
 }

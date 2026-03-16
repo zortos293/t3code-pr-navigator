@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     }
 
     const response = NextResponse.json({ success: true });
-    return attachSessionCookie(response, await createAuthSession());
+    return attachSessionCookie(response, createAuthSession());
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
