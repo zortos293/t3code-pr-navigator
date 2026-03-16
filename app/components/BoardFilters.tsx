@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Filter, GitPullRequest, Link2, ShieldCheck, Tags, X } from 'lucide-react';
 import {
+  BOARD_VISIBILITY_MODES,
   PULL_REQUEST_SIZE_LABELS,
   type PullRequestFilters,
+  type BoardVisibilityMode,
   type PullRequestSizeLabel,
   PULL_REQUEST_VOUCH_STATES,
   type PullRequestVouchState,
@@ -23,6 +25,13 @@ const VOUCH_LABELS: Record<PullRequestVouchState, string> = {
   trusted: 'Trusted',
   unvouched: 'Unvouched',
   none: 'No vouch',
+};
+
+const VISIBILITY_LABELS: Record<BoardVisibilityMode, string> = {
+  all: 'All cards',
+  issues: 'Issues focus',
+  prs: 'PR focus',
+  links: 'Links only',
 };
 
 type Props = {
@@ -52,7 +61,7 @@ type FilterChipProps = {
   active: boolean;
   disabled: boolean;
   label: string;
-  count: number;
+  count?: number;
   onClick: () => void;
 };
 
@@ -71,13 +80,15 @@ function FilterChip({ active, disabled, label, count, onClick }: FilterChipProps
     >
       {active && <Check size={12} />}
       <span>{label}</span>
-      <span
-        className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-          active ? 'bg-white/20 text-white dark:bg-slate-950/15 dark:text-slate-950' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
-        }`}
-      >
-        {count}
-      </span>
+      {count !== undefined && (
+        <span
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+            active ? 'bg-white/20 text-white dark:bg-slate-950/15 dark:text-slate-950' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+          }`}
+        >
+          {count}
+        </span>
+      )}
     </button>
   );
 }
@@ -124,10 +135,11 @@ export default function BoardFilters({
   }, [isOpen]);
 
   const activeLabels = useMemo(() => {
+    const visibilityLabel = filters.visibility !== 'all' ? [VISIBILITY_LABELS[filters.visibility]] : [];
     const vouchLabels = filters.vouchStates.map((state) => VOUCH_LABELS[state]);
     const sizeLabels = filters.sizes.map((size) => SIZE_LABELS[size]);
-    return [...vouchLabels, ...sizeLabels];
-  }, [filters.sizes, filters.vouchStates]);
+    return [...visibilityLabel, ...vouchLabels, ...sizeLabels];
+  }, [filters.sizes, filters.visibility, filters.vouchStates]);
 
   return (
     <div ref={panelRef} className="relative">
@@ -225,6 +237,29 @@ export default function BoardFilters({
           </div>
 
           <div className="mt-3 space-y-3">
+            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800/80 dark:bg-slate-900/55">
+              <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                <Filter size={12} />
+                Focus
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {BOARD_VISIBILITY_MODES.map((visibilityMode) => (
+                  <FilterChip
+                    key={visibilityMode}
+                    active={filters.visibility === visibilityMode}
+                    disabled={false}
+                    label={VISIBILITY_LABELS[visibilityMode]}
+                    onClick={() =>
+                      onChange({
+                        ...filters,
+                        visibility: visibilityMode,
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+
             <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800/80 dark:bg-slate-900/55">
               <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
                 <ShieldCheck size={12} />

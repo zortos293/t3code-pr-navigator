@@ -173,10 +173,21 @@ export async function fetchPRDetails(owner: string, name: string, prNumber: numb
 }
 
 const SOLVES_KEYWORDS = new Set(['fixes', 'fix', 'closes', 'close', 'resolves', 'resolve']);
+const SUPERSEDES_KEYWORDS = new Set([
+  'supersedes',
+  'supersede',
+  'superseded by',
+  'supercedes',
+  'supercede',
+  'superceded by',
+  'superseeds',
+  'superseed',
+  'superseeded by',
+]);
 
-export function extractIssueReferences(text: string): { issueNumber: number; type: 'solves' | 'relates' }[] {
-  const pattern = /(fixes|fix|closes|close|resolves|resolve|relates\s+to|related\s+to|addresses|refs|references)\s+(?:#|https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/)(\d+)/gi;
-  const results: { issueNumber: number; type: 'solves' | 'relates' }[] = [];
+export function extractIssueReferences(text: string): { issueNumber: number; type: 'solves' | 'relates' | 'supersedes' }[] {
+  const pattern = /(fixes|fix|closes|close|resolves|resolve|relates\s+to|related\s+to|addresses|refs|references|supersedes|supersede|superseded\s+by|supercedes|supercede|superceded\s+by|superseeds|superseed|superseeded\s+by)\s+(?:#|https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/)(\d+)/gi;
+  const results: { issueNumber: number; type: 'solves' | 'relates' | 'supersedes' }[] = [];
   const seen = new Set<number>();
 
   let match;
@@ -185,7 +196,11 @@ export function extractIssueReferences(text: string): { issueNumber: number; typ
     if (seen.has(issueNumber)) continue;
     seen.add(issueNumber);
     const keyword = match[1].replace(/\s+/g, ' ').toLowerCase();
-    const type = SOLVES_KEYWORDS.has(keyword) ? 'solves' : 'relates';
+    const type = SOLVES_KEYWORDS.has(keyword)
+      ? 'solves'
+      : SUPERSEDES_KEYWORDS.has(keyword)
+        ? 'supersedes'
+        : 'relates';
     results.push({ issueNumber, type });
   }
 

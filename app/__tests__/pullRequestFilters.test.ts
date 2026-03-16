@@ -78,7 +78,7 @@ describe('pullRequestFilters', () => {
 
     const result = filterBoardByPullRequestFilters(
       { issues, pullRequests, relationships },
-      { sizes: ['size:s'], vouchStates: [] }
+      { sizes: ['size:s'], vouchStates: [], visibility: 'all' }
     );
 
     expect(result.pullRequests.map((pullRequest) => pullRequest.id)).toEqual([11, 13]);
@@ -95,18 +95,21 @@ describe('pullRequestFilters', () => {
       matchesPullRequestFilters(trustedLarge, {
         sizes: ['size:l'],
         vouchStates: ['trusted'],
+        visibility: 'all',
       })
     ).toBe(true);
     expect(
       matchesPullRequestFilters(trustedSmall, {
         sizes: ['size:l'],
         vouchStates: ['trusted'],
+        visibility: 'all',
       })
     ).toBe(false);
     expect(
       matchesPullRequestFilters(unvouchedLarge, {
         sizes: ['size:l'],
         vouchStates: ['trusted'],
+        visibility: 'all',
       })
     ).toBe(false);
   });
@@ -124,5 +127,49 @@ describe('pullRequestFilters', () => {
     expect(counts.vouchStates.trusted).toBe(2);
     expect(counts.vouchStates.unvouched).toBe(1);
     expect(counts.vouchStates.none).toBe(1);
+  });
+
+  it('shows all issues but only connected PR context in issues focus mode', () => {
+    const issues = [makeIssue(1, 10), makeIssue(2, 20)];
+    const pullRequests = [
+      makePR(11, 101, { labels: '["size:s","vouch:trusted"]' }),
+      makePR(12, 102, { labels: '["size:l","vouch:trusted"]' }),
+      makePR(13, 103, { labels: '["size:s"]' }),
+    ];
+    const relationships: Relationship[] = [
+      { id: 1, issue_id: 1, pr_id: 11, relationship_type: 'solves', confidence: 1, issue_number: 10, pr_number: 101 },
+      { id: 2, issue_id: 2, pr_id: 12, relationship_type: 'supersedes', confidence: 1, issue_number: 20, pr_number: 102 },
+    ];
+
+    const result = filterBoardByPullRequestFilters(
+      { issues, pullRequests, relationships },
+      { sizes: [], vouchStates: [], visibility: 'issues' }
+    );
+
+    expect(result.issues.map((issue) => issue.id)).toEqual([1, 2]);
+    expect(result.pullRequests.map((pullRequest) => pullRequest.id)).toEqual([11, 12]);
+    expect(result.relationships.map((relationship) => relationship.id)).toEqual([1, 2]);
+  });
+
+  it('shows only connected cards in links mode after PR filters are applied', () => {
+    const issues = [makeIssue(1, 10), makeIssue(2, 20)];
+    const pullRequests = [
+      makePR(11, 101, { labels: '["size:s","vouch:trusted"]' }),
+      makePR(12, 102, { labels: '["size:l","vouch:trusted"]' }),
+      makePR(13, 103, { labels: '["size:s"]' }),
+    ];
+    const relationships: Relationship[] = [
+      { id: 1, issue_id: 1, pr_id: 11, relationship_type: 'solves', confidence: 1, issue_number: 10, pr_number: 101 },
+      { id: 2, issue_id: 2, pr_id: 12, relationship_type: 'relates', confidence: 0.7, issue_number: 20, pr_number: 102 },
+    ];
+
+    const result = filterBoardByPullRequestFilters(
+      { issues, pullRequests, relationships },
+      { sizes: ['size:s'], vouchStates: ['trusted'], visibility: 'links' }
+    );
+
+    expect(result.issues.map((issue) => issue.id)).toEqual([1]);
+    expect(result.pullRequests.map((pullRequest) => pullRequest.id)).toEqual([11]);
+    expect(result.relationships.map((relationship) => relationship.id)).toEqual([1]);
   });
 });

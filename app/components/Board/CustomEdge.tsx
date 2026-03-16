@@ -50,11 +50,15 @@ export function getEdgeTooltip(
 ): string | null {
   const normalizedRelationshipType = normalizeRelationshipType(relationshipType, fallbackLabel);
 
-  if (normalizedRelationshipType !== 'relates') {
-    return null;
+  if (normalizedRelationshipType === 'relates') {
+    return 'Relates means this pull request is connected to the issue, but it is not confirmed to fully solve it.';
   }
 
-  return 'Relates means this pull request is connected to the issue, but it is not confirmed to fully solve it.';
+  if (normalizedRelationshipType === 'supersedes') {
+    return 'Supersedes means this pull request explicitly replaces or takes over the linked issue work.';
+  }
+
+  return null;
 }
 
 export function getEdgeLabelOffset(
@@ -113,8 +117,10 @@ function CustomEdgeComponent({
     y: sourceY + (targetY - sourceY) * 0.46 + labelOffset.y,
   };
   const isRelates = normalizeRelationshipType(edgeData?.relationshipType, edgeData?.label) === 'relates';
+  const isSupersedes = normalizeRelationshipType(edgeData?.relationshipType, edgeData?.label) === 'supersedes';
   const confidencePercent = edgeData?.confidence !== undefined ? Math.round(edgeData.confidence * 100) : null;
-  const isConfidenceLabel = !isRelates && confidencePercent !== null && confidencePercent < 100;
+  const isContextLabel = isRelates || isSupersedes;
+  const isConfidenceLabel = !isContextLabel && confidencePercent !== null && confidencePercent < 100;
 
   return (
     <>
@@ -147,14 +153,16 @@ function CustomEdgeComponent({
             )}
             <div
               className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold whitespace-nowrap ${
-                isRelates
-                  ? 'cursor-help border-fuchsia-400/45 bg-[#1a0f2d] text-fuchsia-100'
+                isContextLabel
+                  ? isSupersedes
+                    ? 'cursor-help border-amber-400/45 bg-[#211304] text-amber-100'
+                    : 'cursor-help border-fuchsia-400/45 bg-[#1a0f2d] text-fuchsia-100'
                   : 'min-w-[82px] justify-center border-violet-400/45 bg-[#160d27] text-violet-100'
               }`}
             >
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
-                  isRelates ? 'bg-fuchsia-300' : 'bg-violet-300'
+                  isContextLabel ? (isSupersedes ? 'bg-amber-300' : 'bg-fuchsia-300') : 'bg-violet-300'
                 }`}
               />
               {isConfidenceLabel ? (
@@ -164,7 +172,7 @@ function CustomEdgeComponent({
               ) : (
                 <span>{label}</span>
               )}
-              {isRelates && (
+              {isContextLabel && (
                 <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-fuchsia-300/30 text-[9px] text-fuchsia-100/90">
                   ?
                 </span>

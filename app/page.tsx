@@ -51,6 +51,16 @@ export default function Home() {
   const hasActiveFilters = hasActivePullRequestFilters(pullRequestFilters);
   const hasBoardData = board.issues.length > 0 || board.pullRequests.length > 0;
   const hasVisibleBoardData = filteredBoard.issues.length > 0 || filteredBoard.pullRequests.length > 0;
+  const boardViewKey = useMemo(
+    () =>
+      JSON.stringify({
+        repo: selectedRepoId,
+        visibility: pullRequestFilters.visibility,
+        sizes: [...pullRequestFilters.sizes].sort(),
+        vouchStates: [...pullRequestFilters.vouchStates].sort(),
+      }),
+    [pullRequestFilters.sizes, pullRequestFilters.visibility, pullRequestFilters.vouchStates, selectedRepoId]
+  );
 
   const handleAdd = useCallback(async (url: string) => {
     const repo = await addRepo(url);
@@ -196,6 +206,7 @@ export default function Home() {
               <div className="min-h-0 flex-1">
                 {hasVisibleBoardData ? (
                   <Board
+                    key={boardViewKey}
                     issues={filteredBoard.issues}
                     pullRequests={filteredBoard.pullRequests}
                     relationships={filteredBoard.relationships}
@@ -207,10 +218,10 @@ export default function Home() {
                   <div className="flex h-full items-center justify-center px-6">
                     <div className="max-w-md rounded-3xl border border-dashed border-slate-300 bg-white/85 px-8 py-10 text-center shadow-sm dark:border-slate-700 dark:bg-slate-950/70">
                       <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                        No PRs match these filters
+                        Nothing matches these filters
                       </h2>
                       <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                        Try a different size or trust combination, or clear the active filters to bring every card back.
+                        Try a different size, trust, or focus combination, or clear the active filters to bring every card back.
                       </p>
                     </div>
                   </div>

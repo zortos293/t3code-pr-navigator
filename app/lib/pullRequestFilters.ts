@@ -12,13 +12,16 @@ export const PULL_REQUEST_SIZE_LABELS = [
 ] as const;
 
 export const PULL_REQUEST_VOUCH_STATES = ['trusted', 'unvouched', 'none'] as const;
+export const BOARD_VISIBILITY_MODES = ['all', 'issues', 'prs', 'links'] as const;
 
 export type PullRequestSizeLabel = (typeof PULL_REQUEST_SIZE_LABELS)[number];
 export type PullRequestVouchState = (typeof PULL_REQUEST_VOUCH_STATES)[number];
+export type BoardVisibilityMode = (typeof BOARD_VISIBILITY_MODES)[number];
 
 export type PullRequestFilters = {
   sizes: PullRequestSizeLabel[];
   vouchStates: PullRequestVouchState[];
+  visibility: BoardVisibilityMode;
 };
 
 type SortablePullRequest = Pick<PullRequest, 'labels' | 'created_at' | 'github_number'>;
@@ -26,7 +29,7 @@ type SortablePullRequest = Pick<PullRequest, 'labels' | 'created_at' | 'github_n
 const SIZE_PRIORITY = new Map(PULL_REQUEST_SIZE_LABELS.map((label, index) => [label, index]));
 
 export function createEmptyPullRequestFilters(): PullRequestFilters {
-  return { sizes: [], vouchStates: [] };
+  return { sizes: [], vouchStates: [], visibility: 'all' };
 }
 
 function getSortableTimestamp(dateStr: string | null): number {
@@ -129,7 +132,7 @@ export function sortPullRequestsForBoard<T extends SortablePullRequest>(pullRequ
 }
 
 export function hasActivePullRequestFilters(filters: PullRequestFilters): boolean {
-  return filters.sizes.length > 0 || filters.vouchStates.length > 0;
+  return filters.sizes.length > 0 || filters.vouchStates.length > 0 || filters.visibility !== 'all';
 }
 
 export function matchesPullRequestFilters(
@@ -161,19 +164,45 @@ export function filterBoardByPullRequestFilters(
     return boardData;
   }
 
-  const visiblePullRequests = boardData.pullRequests.filter((pullRequest) =>
-    matchesPullRequestFilters(pullRequest, filters)
+  const hasPullRequestAttributeFilters = filters.sizes.length > 0 || filters.vouchStates.length > 0;
+  const attributeMatchedPullRequests = hasPullRequestAttributeFilters
+    ? boardData.pullRequests.filter((pullRequest) => matchesPullRequestFilters(pullRequest, filters))
+    : boardData.pullRequests;
+  const attributeMatchedPrIds = new Set(attributeMatchedPullRequests.map((pullRequest) => pullRequest.id));
+  const attributeMatchedRelationships = boardData.relationships.filter((relationship) =>
+    attributeMatchedPrIds.has(relationship.pr_id)
   );
-  const visiblePrIds = new Set(visiblePullRequests.map((pullRequest) => pullRequest.id));
-  const visibleRelationships = boardData.relationships.filter((relationship) =>
-    visiblePrIds.has(relationship.pr_id)
-  );
-  const visibleIssueIds = new Set(visibleRelationships.map((relationship) => relationship.issue_id));
-  const visibleIssues = boardData.issues.filter((issue) => visibleIssueIds.has(issue.id));
+  const relatedIssueIds = new Set(attributeMatchedRelationships.map((relationship) => relationship.issue_id));
+  const relatedPrIds = new Set(attributeMatchedRelationships.map((relationship) => relationship.pr_id));
 
-  return {
-    issues: visibleIssues,
-    pullRequests: visiblePullRequests,
-    relationships: visibleRelationships,
-  };
+  switch (filters.visibility) {
+    case 'issues':
+      return {
+        issues: boardData.issues,
+        pullRequests: attributeMatchedPullRequests.filter((pullRequest) => relatedPrIds.has(pullRequest.id)),
+        relationships: attributeMatchedRelationships,
+      };
+
+    case 'prs':
+      return {
+        issues: boardData.issues.filter((issue) => relatedIssueIds.has(issue.id)),
+        pullRequests: attributeMatchedPullRequests,
+        relationships: attributeMatchedRelationships,
+      };
+
+    case 'links':
+      return {
+        issues: boardData.issues.filter((issue) => relatedIssueIds.has(issue.id)),
+        pullRequests: attributeMatchedPullRequests.filter((pullRequest) => relatedPrIds.has(pullRequest.id)),
+        relationships: attributeMatchedRelationships,
+      };
+
+    case 'all':
+    default:
+      return {
+        issues: boardData.issues.filter((issue) => relatedIssueIds.has(issue.id)),
+        pullRequests: attributeMatchedPullRequests,
+        relationships: attributeMatchedRelationships,
+      };
+  }
 }

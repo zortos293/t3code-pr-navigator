@@ -57,6 +57,17 @@ describe('extractIssueReferences', () => {
     expect(result).toEqual([{ issueNumber: 200, type: 'relates' }]);
   });
 
+  it('extracts "supersedes #921"', () => {
+    const result = extractIssueReferences('Supersedes #921');
+    expect(result).toEqual([{ issueNumber: 921, type: 'supersedes' }]);
+  });
+
+  it('extracts common supersedes misspellings', () => {
+    const result = extractIssueReferences('superseeds #88 and supercedes #89');
+    expect(result).toContainEqual({ issueNumber: 88, type: 'supersedes' });
+    expect(result).toContainEqual({ issueNumber: 89, type: 'supersedes' });
+  });
+
   it('extracts multiple references from one text', () => {
     const result = extractIssueReferences('fixes #10 and relates to #20');
     expect(result).toHaveLength(2);
