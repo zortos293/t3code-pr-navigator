@@ -7,22 +7,39 @@ export async function GET(_request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const repoId = parseInt(id, 10);
-    const repo = repos.getById(repoId);
+    const repo = await repos.getById(repoId);
     if (!repo) {
       return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
     }
 
-    const repoIssues = issues.getByRepoId(repoId);
-    const repoPRs = pullRequests.getByRepoId(repoId);
-    const repoRelationships = relationships.getByRepoId(repoId);
-    const repoDuplicates = duplicates.getByRepoId(repoId);
+    const [repoIssues, repoPRs, repoRelationships, repoDuplicates] = await Promise.all([
+      issues.getByRepoId(repoId),
+      pullRequests.getByRepoId(repoId),
+      relationships.getByRepoId(repoId),
+      duplicates.getByRepoId(repoId),
+    ]);
+
+    const openIssues = repoIssues.filter((issue) => issue.state === 'open');
+    const openPullRequests = repoPRs.filter((pullRequest) => pullRequest.state === 'open');
+    const openIssueIds = new Set(openIssues.map((issue) => issue.id));
+    const openPullRequestIds = new Set(openPullRequests.map((pullRequest) => pullRequest.id));
+    const visibleRelationships = repoRelationships.filter(
+      (relationship) =>
+        openIssueIds.has(relationship.issue_id) &&
+        openPullRequestIds.has(relationship.pr_id)
+    );
+    const visibleDuplicates = repoDuplicates.filter(
+      (duplicate) =>
+        openIssueIds.has(duplicate.original_issue_id) &&
+        openIssueIds.has(duplicate.duplicate_issue_id)
+    );
 
     return NextResponse.json({
       ...repo,
-      issues: repoIssues,
-      pull_requests: repoPRs,
-      relationships: repoRelationships,
-      duplicates: repoDuplicates,
+      issues: openIssues,
+      pull_requests: openPullRequests,
+      relationships: visibleRelationships,
+      duplicates: visibleDuplicates,
     });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
@@ -33,12 +50,12 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const repoId = parseInt(id, 10);
-    const repo = repos.getById(repoId);
+    const repo = await repos.getById(repoId);
     if (!repo) {
       return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
     }
 
-    repos.delete(repoId);
+    await repos.delete(repoId);
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

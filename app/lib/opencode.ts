@@ -48,6 +48,35 @@ type DuplicateBatch = {
   comparisonIssues: Issue[];
 };
 
+type ExistingRelationship = {
+  issue_id: number;
+  pr_id: number;
+};
+
+export function getAnalysisCandidates(
+  issues: Issue[],
+  pullRequests: PullRequest[],
+  relationships: ExistingRelationship[]
+) {
+  const openIssues = issues.filter((issue) => issue.state === 'open');
+  const openPullRequests = pullRequests.filter((pullRequest) => pullRequest.state === 'open');
+  const openIssueIds = new Set(openIssues.map((issue) => issue.id));
+  const openPullRequestIds = new Set(openPullRequests.map((pullRequest) => pullRequest.id));
+  const activeRelationships = relationships.filter(
+    (relationship) =>
+      openIssueIds.has(relationship.issue_id) &&
+      openPullRequestIds.has(relationship.pr_id)
+  );
+  const linkedIssueIds = new Set(activeRelationships.map((relationship) => relationship.issue_id));
+  const linkedPullRequestIds = new Set(activeRelationships.map((relationship) => relationship.pr_id));
+
+  return {
+    issuesToAnalyze: openIssues.filter((issue) => !linkedIssueIds.has(issue.id)),
+    pullRequestsToAnalyze: openPullRequests.filter((pullRequest) => !linkedPullRequestIds.has(pullRequest.id)),
+    activeRelationships,
+  };
+}
+
 type OpenCodeGoTextPart = {
   type?: string;
   text?: string;
@@ -665,11 +694,20 @@ function calculateProgress(completedBatches: number, totalBatches: number): numb
 export async function runAnalysis(repoId: number, jobId?: number) {
   const { issues: issuesDb, pullRequests: prsDb, relationships: relsDb, duplicates: dupsDb } = await import('./db');
 
-  const analysisJobId = jobId ?? analysisJobs.create(repoId, 'analyze').id;
-  const allIssues = issuesDb.getByRepoId(repoId);
-  const allPRs = prsDb.getByRepoId(repoId);
-  const relationshipBatches = buildRelationshipAnalysisBatches(allIssues, allPRs);
-  const duplicateBatches = buildDuplicateAnalysisBatches(allIssues);
+  const analysisJobId = jobId ?? (await analysisJobs.create(repoId, 'analyze')).id;
+  const [allIssues, allPRs, existingRelationships, existingDuplicates] = await Promise.all([
+    issuesDb.getByRepoId(repoId),
+    prsDb.getByRepoId(repoId),
+    relsDb.getByRepoId(repoId),
+    dupsDb.getByRepoId(repoId),
+  ]);
+  const { issuesToAnalyze, pullRequestsToAnalyze, activeRelationships } = getAnalysisCandidates(
+    allIssues,
+    allPRs,
+    existingRelationships
+  );
+  const relationshipBatches = buildRelationshipAnalysisBatches(issuesToAnalyze, pullRequestsToAnalyze);
+  const duplicateBatches = buildDuplicateAnalysisBatches(issuesToAnalyze);
   const totalBatches = relationshipBatches.length + duplicateBatches.length;
   let completedBatches = 0;
   let relationshipsCreated = 0;
@@ -677,7 +715,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
 
   try {
     if (totalBatches === 0) {
-      analysisJobs.update(analysisJobId, {
+      await analysisJobs.update(analysisJobId, {
         status: 'completed',
         progress: 100,
         result: JSON.stringify({ relationshipsCreated: 0, duplicatesCreated: 0, totalBatches: 0 }),
@@ -685,17 +723,29 @@ export async function runAnalysis(repoId: number, jobId?: number) {
         error: null,
       });
 
-      return analysisJobs.getByRepoId(repoId).find((job) => job.id === analysisJobId);
+      return (await analysisJobs.getByRepoId(repoId)).find((job) => job.id === analysisJobId);
     }
 
-    analysisJobs.update(analysisJobId, {
+    await analysisJobs.update(analysisJobId, {
       progress: calculateProgress(0, totalBatches),
       error: null,
     });
 
-    const issueByNumber = new Map(allIssues.map((issue) => [issue.github_number, issue] as const));
-    const prByNumber = new Map(allPRs.map((pr) => [pr.github_number, pr] as const));
-    const seenDuplicatePairs = new Set<string>();
+    const issueByNumber = new Map(issuesToAnalyze.map((issue) => [issue.github_number, issue] as const));
+    const prByNumber = new Map(pullRequestsToAnalyze.map((pr) => [pr.github_number, pr] as const));
+    const seenRelationshipPairs = new Set(
+      activeRelationships.map((relationship) => `${relationship.issue_id}:${relationship.pr_id}`)
+    );
+    const analyzableIssueIds = new Set(issuesToAnalyze.map((issue) => issue.id));
+    const seenDuplicatePairs = new Set(
+      existingDuplicates
+        .filter(
+          (duplicate) =>
+            analyzableIssueIds.has(duplicate.original_issue_id) &&
+            analyzableIssueIds.has(duplicate.duplicate_issue_id)
+        )
+        .map((duplicate) => `${duplicate.original_issue_id}:${duplicate.duplicate_issue_id}`)
+    );
 
     for (const batch of relationshipBatches) {
       const matches = await analyzeRelationshipBatch(batch);
@@ -711,7 +761,13 @@ export async function runAnalysis(repoId: number, jobId?: number) {
           continue;
         }
 
-        relsDb.create({
+        const pairKey = `${issue.id}:${pr.id}`;
+        if (seenRelationshipPairs.has(pairKey)) {
+          continue;
+        }
+        seenRelationshipPairs.add(pairKey);
+
+        await relsDb.create({
           issue_id: issue.id,
           pr_id: pr.id,
           relationship_type: 'solves',
@@ -721,7 +777,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
       }
 
       completedBatches++;
-      analysisJobs.update(analysisJobId, {
+      await analysisJobs.update(analysisJobId, {
         progress: calculateProgress(completedBatches, totalBatches),
       });
     }
@@ -746,7 +802,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
         }
         seenDuplicatePairs.add(pairKey);
 
-        dupsDb.create({
+        await dupsDb.create({
           original_issue_id: Math.min(issue.id, duplicateIssue.id),
           duplicate_issue_id: Math.max(issue.id, duplicateIssue.id),
           confidence: match.confidence,
@@ -756,12 +812,12 @@ export async function runAnalysis(repoId: number, jobId?: number) {
       }
 
       completedBatches++;
-      analysisJobs.update(analysisJobId, {
+      await analysisJobs.update(analysisJobId, {
         progress: calculateProgress(completedBatches, totalBatches),
       });
     }
 
-    analysisJobs.update(analysisJobId, {
+    await analysisJobs.update(analysisJobId, {
       status: 'completed',
       progress: 100,
       result: JSON.stringify({
@@ -774,14 +830,14 @@ export async function runAnalysis(repoId: number, jobId?: number) {
       error: null,
     });
   } catch (error) {
-    analysisJobs.update(analysisJobId, {
+    await analysisJobs.update(analysisJobId, {
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
       completed_at: new Date().toISOString(),
     });
   }
 
-  return analysisJobs.getByRepoId(repoId).find((job) => job.id === analysisJobId);
+  return (await analysisJobs.getByRepoId(repoId)).find((job) => job.id === analysisJobId);
 }
 
 export async function isOpenCodeConfigured(): Promise<boolean> {

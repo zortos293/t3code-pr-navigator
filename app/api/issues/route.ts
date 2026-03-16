@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     if (!repoId) {
       return NextResponse.json({ error: 'repo_id is required' }, { status: 400 });
     }
-    const result = issues.getByRepoId(parseInt(repoId, 10));
+    const result = await issues.getByRepoId(parseInt(repoId, 10));
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

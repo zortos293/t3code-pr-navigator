@@ -37,7 +37,7 @@ export function useDetailContent(
     setLoadingComments(true);
     setComments([]);
 
-    fetch(`/api/comments?owner=${owner}&name=${name}&number=${number}`)
+    fetch(`/api/comments?owner=${owner}&name=${name}&number=${number}&repoId=${detail.item.repo_id}`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) setComments(data);

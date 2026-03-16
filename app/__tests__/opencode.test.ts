@@ -4,6 +4,7 @@ import {
   buildRelationshipAnalysisBatches,
   chunkItems,
   extractJsonPayload,
+  getAnalysisCandidates,
   isRetryableOpenCodeError,
   parseModelJsonResponse,
   retryOpenCodeRequest,
@@ -87,6 +88,30 @@ describe('duplicate batching', () => {
     expect(batches[0].comparisonIssues).toHaveLength(100);
     expect(batches[9].primaryIssues).toHaveLength(100);
     expect(batches[9].comparisonIssues).toHaveLength(100);
+  });
+});
+
+describe('analysis candidate selection', () => {
+  it('only analyzes open issues and PRs that are not already linked to another open item', () => {
+    const issue1 = createIssue(1);
+    const issue2 = createIssue(2);
+    const issue3 = createIssue(3, { state: 'closed', closed_at: '2026-01-01T00:00:00.000Z' });
+    const pr1 = createPullRequest(101);
+    const pr2 = createPullRequest(102);
+    const pr3 = createPullRequest(103, { state: 'closed', closed_at: '2026-01-01T00:00:00.000Z' });
+
+    const result = getAnalysisCandidates(
+      [issue1, issue2, issue3],
+      [pr1, pr2, pr3],
+      [
+        { issue_id: issue1.id, pr_id: pr1.id },
+        { issue_id: issue2.id, pr_id: pr3.id },
+      ]
+    );
+
+    expect(result.issuesToAnalyze.map((issue) => issue.id)).toEqual([issue2.id]);
+    expect(result.pullRequestsToAnalyze.map((pullRequest) => pullRequest.id)).toEqual([pr2.id]);
+    expect(result.activeRelationships).toEqual([{ issue_id: issue1.id, pr_id: pr1.id }]);
   });
 });
 

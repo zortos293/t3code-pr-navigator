@@ -5,9 +5,9 @@ export async function GET(request: NextRequest) {
   try {
     const repoId = request.nextUrl.searchParams.get('repo_id');
     if (repoId) {
-      return NextResponse.json(relationships.getByRepoId(parseInt(repoId, 10)));
+      return NextResponse.json(await relationships.getByRepoId(parseInt(repoId, 10)));
     }
-    return NextResponse.json(relationships.getAll());
+    return NextResponse.json(await relationships.getAll());
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'issue_id and pr_id are required' }, { status: 400 });
     }
 
-    const rel = relationships.create({
+    const rel = await relationships.create({
       issue_id,
       pr_id,
       relationship_type: relationship_type || 'solves',
@@ -41,7 +41,7 @@ export async function DELETE(request: NextRequest) {
     if (!id) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
-    relationships.delete(parseInt(id, 10));
+    await relationships.delete(parseInt(id, 10));
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { parseGitHubUrl, extractIssueReferences } from '../lib/github';
+import type { Issue, PullRequest } from '../lib/db';
+import {
+  buildClosedIssueUpdates,
+  buildClosedPullRequestUpdates,
+  parseGitHubUrl,
+  extractIssueReferences,
+} from '../lib/github';
 
 describe('parseGitHubUrl', () => {
   it('parses a full GitHub URL', () => {
@@ -98,5 +104,84 @@ describe('extractIssueReferences', () => {
   it('is case-insensitive', () => {
     const result = extractIssueReferences('FIXES #123');
     expect(result).toEqual([{ issueNumber: 123, type: 'solves' }]);
+  });
+});
+
+function createIssue(number: number, overrides: Partial<Issue> = {}): Issue {
+  return {
+    id: number,
+    repo_id: 1,
+    github_number: number,
+    title: `Issue ${number}`,
+    body: null,
+    state: 'open',
+    author: 'octocat',
+    author_avatar: null,
+    labels: null,
+    created_at: null,
+    updated_at: '2026-01-01T00:00:00.000Z',
+    closed_at: null,
+    ...overrides,
+  };
+}
+
+function createPullRequest(number: number, overrides: Partial<PullRequest> = {}): PullRequest {
+  return {
+    id: number,
+    repo_id: 1,
+    github_number: number,
+    title: `PR ${number}`,
+    body: null,
+    state: 'open',
+    author: 'octocat',
+    author_avatar: null,
+    labels: null,
+    additions: 0,
+    deletions: 0,
+    changed_files: 0,
+    draft: 0,
+    created_at: null,
+    updated_at: '2026-01-01T00:00:00.000Z',
+    merged_at: null,
+    closed_at: null,
+    ...overrides,
+  };
+}
+
+describe('sync closing helpers', () => {
+  it('marks tracked issues missing from the latest open sync as closed', () => {
+    const syncedAt = '2026-03-16T00:00:00.000Z';
+    const updates = buildClosedIssueUpdates(
+      [createIssue(1), createIssue(2), createIssue(3, { state: 'closed', closed_at: '2026-02-01T00:00:00.000Z' })],
+      new Set([1]),
+      syncedAt
+    );
+
+    expect(updates).toEqual([
+      expect.objectContaining({
+        github_number: 2,
+        state: 'closed',
+        updated_at: syncedAt,
+        closed_at: syncedAt,
+      }),
+    ]);
+  });
+
+  it('marks tracked pull requests missing from the latest open sync as closed', () => {
+    const syncedAt = '2026-03-16T00:00:00.000Z';
+    const updates = buildClosedPullRequestUpdates(
+      [createPullRequest(10), createPullRequest(11, { state: 'closed', closed_at: '2026-02-01T00:00:00.000Z' })],
+      new Set<number>(),
+      syncedAt
+    );
+
+    expect(updates).toEqual([
+      expect.objectContaining({
+        github_number: 10,
+        state: 'closed',
+        updated_at: syncedAt,
+        closed_at: syncedAt,
+      }),
+    ]);
   });
 });

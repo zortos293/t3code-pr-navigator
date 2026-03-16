@@ -14,7 +14,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Invalid repository id' }, { status: 400 });
     }
 
-    const repo = repos.getById(repoId);
+    const repo = await repos.getById(repoId);
     if (!repo) {
       return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
     }
@@ -26,9 +26,9 @@ export async function POST(_request: NextRequest, { params }: Params) {
       );
     }
 
-    const job = analysisJobs.create(repoId, 'analyze');
+    const job = await analysisJobs.create(repoId, 'analyze');
     void runAnalysis(repoId, job.id).catch((error) => {
-      analysisJobs.update(job.id, {
+      void analysisJobs.update(job.id, {
         status: 'failed',
         error: String(error),
         completed_at: new Date().toISOString(),

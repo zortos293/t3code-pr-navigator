@@ -12,12 +12,12 @@ export async function GET(_request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Invalid repository id' }, { status: 400 });
     }
 
-    const repo = repos.getById(repoId);
+    const repo = await repos.getById(repoId);
     if (!repo) {
       return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
     }
 
-    const job = analysisJobs.getByRepoId(repoId).find((entry) => entry.job_type === 'analyze');
+    const job = (await analysisJobs.getByRepoId(repoId)).find((entry) => entry.job_type === 'analyze');
 
     if (!job) {
       return NextResponse.json(null);
