@@ -189,6 +189,76 @@ export function extractIssueReferences(text: string): { issueNumber: number; typ
   return results;
 }
 
+export type GitHubComment = {
+  id: number;
+  body: string;
+  author: string;
+  author_avatar: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GitHubPRFile = {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+};
+
+export async function fetchPRFiles(
+  owner: string,
+  name: string,
+  prNumber: number,
+): Promise<GitHubPRFile[]> {
+  const octokit = getOctokit();
+  try {
+    const { data } = await octokit.pulls.listFiles({
+      owner,
+      repo: name,
+      pull_number: prNumber,
+      per_page: 100,
+    });
+    return data.map((f) => ({
+      filename: f.filename,
+      status: f.status,
+      additions: f.additions,
+      deletions: f.deletions,
+      changes: f.changes,
+      patch: f.patch,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchComments(
+  owner: string,
+  name: string,
+  number: number,
+): Promise<GitHubComment[]> {
+  const octokit = getOctokit();
+  try {
+    const { data } = await octokit.issues.listComments({
+      owner,
+      repo: name,
+      issue_number: number,
+      per_page: 100,
+    });
+    return data.map((c) => ({
+      id: c.id,
+      body: c.body || '',
+      author: c.user?.login || 'unknown',
+      author_avatar: c.user?.avatar_url || null,
+      created_at: c.created_at,
+      updated_at: c.updated_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function syncRepository(
   repoId: number,
   owner: string,
