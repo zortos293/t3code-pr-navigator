@@ -30,6 +30,50 @@ import {
   MAX_STANDALONE_PER_ROW,
 } from './boardConfig';
 
+const BUG_PATTERN = /\bbugs?\b/i;
+const FEATURE_PATTERN = /\b(?:features?|feat|enhancements?|enchancements?)\b/i;
+
+type StandaloneIssueCategory = 'bug' | 'feature' | 'uncategorized';
+
+function getIssueCategory(issue: Issue): StandaloneIssueCategory {
+  const searchableText = [issue.title, ...parseLabels(issue.labels)].join(' ');
+
+  if (BUG_PATTERN.test(searchableText)) return 'bug';
+  if (FEATURE_PATTERN.test(searchableText)) return 'feature';
+
+  return 'uncategorized';
+}
+
+function getSortableTimestamp(dateStr: string | null): number {
+  if (!dateStr) return Number.NEGATIVE_INFINITY;
+
+  const timestamp = new Date(dateStr).getTime();
+  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+}
+
+function sortIssuesNewestFirst(issues: Issue[]): Issue[] {
+  return [...issues].sort((a, b) => {
+    const timestampDiff = getSortableTimestamp(b.created_at) - getSortableTimestamp(a.created_at);
+    if (timestampDiff !== 0) return timestampDiff;
+
+    return b.github_number - a.github_number;
+  });
+}
+
+function groupStandaloneIssues(issues: Issue[]): Record<StandaloneIssueCategory, Issue[]> {
+  const grouped: Record<StandaloneIssueCategory, Issue[]> = {
+    bug: [],
+    feature: [],
+    uncategorized: [],
+  };
+
+  for (const issue of sortIssuesNewestFirst(issues)) {
+    grouped[getIssueCategory(issue)].push(issue);
+  }
+
+  return grouped;
+}
+
 export function createIssueNode(
   issue: Issue,
   repoFullName: string,
@@ -149,6 +193,7 @@ export function buildClusteredNodes(
 
   const allNodes: Node[] = [];
   let currentY = 0;
+  const groupedStandaloneIssues = groupStandaloneIssues(standaloneIssues);
 
   /* ── Section: Connected Work ─────────────────────────────── */
   if (clusters.length > 0) {
@@ -244,20 +289,40 @@ export function buildClusteredNodes(
     currentY = rowStartY + rowMaxHeight + SECTION_GAP;
   }
 
-  /* ── Section: Standalone Issues ──────────────────────────── */
-  const issueSection = buildStandaloneSection(
-    standaloneIssues,
-    (item, pos) => createIssueNode(item as Issue, repoFullName, pos),
-    ISSUE_WIDTH,
-    ISSUE_CARD_HEIGHT,
-    STANDALONE_ISSUE_GAP_X,
-    STANDALONE_ISSUE_GAP_Y,
-    'Issues',
-    'Not linked to any pull request',
-    currentY
-  );
-  allNodes.push(...issueSection.nodes);
-  currentY = issueSection.nextY;
+  /* ── Sections: Standalone Issues ─────────────────────────── */
+  const standaloneIssueSections = [
+    {
+      items: groupedStandaloneIssues.bug,
+      title: 'Bugs',
+      subtitle: 'Not linked to any pull request',
+    },
+    {
+      items: groupedStandaloneIssues.feature,
+      title: 'Features',
+      subtitle: 'Not linked to any pull request',
+    },
+    {
+      items: groupedStandaloneIssues.uncategorized,
+      title: 'Uncategorized',
+      subtitle: 'Not linked to any pull request',
+    },
+  ];
+
+  for (const section of standaloneIssueSections) {
+    const issueSection = buildStandaloneSection(
+      section.items,
+      (item, pos) => createIssueNode(item as Issue, repoFullName, pos),
+      ISSUE_WIDTH,
+      ISSUE_CARD_HEIGHT,
+      STANDALONE_ISSUE_GAP_X,
+      STANDALONE_ISSUE_GAP_Y,
+      section.title,
+      section.subtitle,
+      currentY
+    );
+    allNodes.push(...issueSection.nodes);
+    currentY = issueSection.nextY;
+  }
 
   /* ── Section: Standalone Pull Requests ───────────────────── */
   const prSection = buildStandaloneSection(
