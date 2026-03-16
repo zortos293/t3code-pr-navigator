@@ -9,7 +9,7 @@ A visual board for navigating GitHub issues and pull requests. Add repositories,
 - **Label Badges** — Styled badges for `vouch:`, `size:`, `bug`, `enhancement` labels
 - **Line Stats** — Shows `+additions` / `-deletions` on each PR card
 - **Relationship Mapping** — Draw edges between issues and PRs to mark "solved by"
-- **AI Analysis** — Optional OpenCode Go integration for automatic relationship detection and duplicate finding
+- **OpenCode Analysis** — Optional OpenCode Go integration for automatic relationship detection and duplicate finding
 - **Dark Mode** — Light / Auto / Dark theme toggle
 - **SQLite Storage** — Local database via better-sqlite3
 
@@ -32,7 +32,7 @@ This repository uses Bun as its package manager and commits `bun.lock` as the on
 | Variable | Required | Description |
 |---|---|---|
 | `GITHUB_TOKEN` | Recommended | GitHub personal access token (increases API rate limits) |
-| `OPENCODE_GO_API_KEY` | Optional | OpenCode Go API key used for AI analysis |
+| `OPENCODE_GO_API_KEY` | Optional | OpenCode Go API key used for OpenCode analysis |
 | `OPENCODE_GO_MODEL` | No | OpenCode Go chat-completions model id (default: `kimi-k2.5`) |
 | `DATABASE_URL` | No | SQLite database path (default: `./data/pr-navigator.db`) |
 

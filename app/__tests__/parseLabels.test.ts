@@ -25,4 +25,8 @@ describe('parseLabels', () => {
   it('handles single-element array', () => {
     expect(parseLabels('["enhancement"]')).toEqual(['enhancement']);
   });
+
+  it('parses legacy JSON arrays of label objects', () => {
+    expect(parseLabels('[{"name":"bug"},{"name":"enhancement"}]')).toEqual(['bug', 'enhancement']);
+  });
 });

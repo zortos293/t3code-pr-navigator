@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildDuplicateAnalysisBatches,
   buildRelationshipAnalysisBatches,
   chunkItems,
   extractJsonPayload,
+  isRetryableOpenCodeError,
   parseModelJsonResponse,
+  retryOpenCodeRequest,
 } from '../lib/opencode';
 import type { Issue, PullRequest } from '../lib/db';
 
@@ -100,5 +102,33 @@ describe('model JSON parsing', () => {
     );
 
     expect(parsed).toEqual({ duplicates: [{ issue_number: 1 }] });
+  });
+});
+
+describe('OpenCode retries', () => {
+  it('retries retryable request failures up to two additional times', async () => {
+    const operation = vi.fn<() => Promise<string>>()
+      .mockRejectedValueOnce(Object.assign(new Error('OpenCode Go request timed out after 90 seconds'), { retryable: true }))
+      .mockRejectedValueOnce(Object.assign(new Error('network failure'), { retryable: true }))
+      .mockResolvedValue('ok');
+
+    await expect(retryOpenCodeRequest(operation, { delayMs: 0 })).resolves.toBe('ok');
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry non-retryable failures', async () => {
+    const operation = vi.fn<() => Promise<string>>()
+      .mockRejectedValue(new Error('OpenCode Go returned an empty response'));
+
+    await expect(retryOpenCodeRequest(operation, { delayMs: 0 })).rejects.toThrow(
+      'OpenCode Go returned an empty response'
+    );
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it('detects retryable timeout and network errors', () => {
+    expect(isRetryableOpenCodeError(new Error('OpenCode Go request timed out after 90 seconds'))).toBe(true);
+    expect(isRetryableOpenCodeError(new Error('fetch failed'))).toBe(true);
+    expect(isRetryableOpenCodeError(new Error('OpenCode Go returned an empty response'))).toBe(false);
   });
 });

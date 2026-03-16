@@ -111,9 +111,16 @@ describe('buildClusters', () => {
     expect(result.standalonePrs).toHaveLength(0);
   });
 
-  it('sorts clusters by size (largest first)', () => {
-    const issues = [makeIssue(1, 10), makeIssue(2, 20), makeIssue(3, 30)];
-    const prs = [makePR(4, 40), makePR(5, 50)];
+  it('sorts clusters by latest activity before size', () => {
+    const issues = [
+      { ...makeIssue(1, 10), created_at: '2024-01-01T00:00:00Z' },
+      { ...makeIssue(2, 20), created_at: '2024-02-01T00:00:00Z' },
+      { ...makeIssue(3, 30), created_at: '2024-03-01T00:00:00Z' },
+    ];
+    const prs = [
+      { ...makePR(4, 40), created_at: '2024-01-15T00:00:00Z' },
+      { ...makePR(5, 50), created_at: '2024-03-15T00:00:00Z' },
+    ];
     // Cluster 1: issue 1 + pr 4 (2 items)
     // Cluster 2: issues 2,3 + pr 5 (3 items)
     const rels = [
@@ -125,9 +132,8 @@ describe('buildClusters', () => {
     const result = buildClusters(issues, prs, rels);
 
     expect(result.clusters).toHaveLength(2);
-    // Larger cluster (3 items) should come first
-    expect(result.clusters[0].issues.length + result.clusters[0].prs.length).toBe(3);
-    expect(result.clusters[1].issues.length + result.clusters[1].prs.length).toBe(2);
+    expect(result.clusters[0].prs[0].github_number).toBe(50);
+    expect(result.clusters[1].prs[0].github_number).toBe(40);
   });
 
   it('handles relationships referencing non-existent items', () => {

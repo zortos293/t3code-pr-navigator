@@ -7,6 +7,13 @@ export type ClusterResult = {
   standalonePrs: PullRequest[];
 };
 
+function getSortableTimestamp(dateStr: string | null): number {
+  if (!dateStr) return Number.NEGATIVE_INFINITY;
+
+  const timestamp = new Date(dateStr).getTime();
+  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+}
+
 export function buildClusters(
   issues: Issue[],
   pullRequests: PullRequest[],
@@ -62,6 +69,16 @@ export function buildClusters(
   }
 
   clusters.sort((a, b) => {
+    const latestA = Math.max(
+      ...a.issues.map((issue) => getSortableTimestamp(issue.created_at)),
+      ...a.prs.map((pr) => getSortableTimestamp(pr.created_at))
+    );
+    const latestB = Math.max(
+      ...b.issues.map((issue) => getSortableTimestamp(issue.created_at)),
+      ...b.prs.map((pr) => getSortableTimestamp(pr.created_at))
+    );
+    if (latestA !== latestB) return latestB - latestA;
+
     const sizeA = a.issues.length + a.prs.length;
     const sizeB = b.issues.length + b.prs.length;
     if (sizeA !== sizeB) return sizeB - sizeA;
