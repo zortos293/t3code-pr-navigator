@@ -1,9 +1,5 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
 import {
   X,
   CircleDot,
@@ -12,45 +8,18 @@ import {
   Calendar,
   Loader2,
   ExternalLink,
-  ChevronDown,
-  ChevronRight,
   FileCode,
   Link2,
 } from 'lucide-react';
 import LabelBadge from '../LabelBadge';
+import MarkdownContent from '../MarkdownContent';
+import CommentItem from '../CommentItem';
+import DiffFileItem from '../DiffFileItem';
 import type { Issue, PullRequest } from '@/app/lib/db';
-
-type Comment = {
-  id: number;
-  body: string;
-  author: string;
-  author_avatar: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type PRFile = {
-  filename: string;
-  status: string;
-  additions: number;
-  deletions: number;
-  changes: number;
-  patch?: string;
-};
-
-type Relationship = {
-  id: number;
-  issue_id: number;
-  pr_id: number;
-  relationship_type: string;
-  confidence: number;
-  issue_number: number;
-  pr_number: number;
-};
-
-export type DetailItem =
-  | { type: 'issue'; item: Issue }
-  | { type: 'pr'; item: PullRequest };
+import type { Relationship, DetailItem } from '@/app/lib/types';
+import { parseLabels } from '@/app/lib/parseLabels';
+import { formatDate } from '@/app/lib/dateUtils';
+import { useDetailContent } from '@/app/hooks/useDetailContent';
 
 type Props = {
   detail: DetailItem | null;
@@ -62,250 +31,6 @@ type Props = {
   onNavigate: (detail: DetailItem) => void;
 };
 
-function parseLabels(labelsJson: string | null): string[] {
-  if (!labelsJson) return [];
-  try {
-    return JSON.parse(labelsJson);
-  } catch {
-    return [];
-  }
-}
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '';
-  return new Date(dateStr).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function timeAgo(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 30) return formatDate(dateStr);
-  if (diffDays > 0) return `${diffDays}d ago`;
-  if (diffHours > 0) return `${diffHours}h ago`;
-  if (diffMins > 0) return `${diffMins}m ago`;
-  return 'just now';
-}
-
-function fileStatusColor(status: string): string {
-  switch (status) {
-    case 'added': return 'text-green-500';
-    case 'removed': return 'text-red-500';
-    case 'renamed': return 'text-blue-500';
-    default: return 'text-yellow-500';
-  }
-}
-
-function fileStatusLabel(status: string): string {
-  switch (status) {
-    case 'added': return 'A';
-    case 'removed': return 'D';
-    case 'renamed': return 'R';
-    default: return 'M';
-  }
-}
-
-/* ── Markdown wrapper ──────────────────────────────────────── */
-
-function MarkdownContent({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw]}
-      components={{
-        img: ({ src, alt, ...props }) => (
-          <img
-            src={src}
-            alt={alt || ''}
-            className="max-w-full rounded-lg my-2"
-            loading="lazy"
-            {...props}
-          />
-        ),
-        a: ({ href, children, ...props }) => (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 hover:text-blue-400 underline"
-            {...props}
-          >
-            {children}
-          </a>
-        ),
-        code: ({ children, className, ...props }) => {
-          const isInline = !className;
-          if (isInline) {
-            return (
-              <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono text-pink-600 dark:text-pink-400" {...props}>
-                {children}
-              </code>
-            );
-          }
-          return (
-            <code className={`${className} block bg-gray-100 dark:bg-gray-800 p-3 rounded-lg text-xs font-mono overflow-x-auto`} {...props}>
-              {children}
-            </code>
-          );
-        },
-        pre: ({ children }) => (
-          <pre className="bg-gray-100 dark:bg-gray-800 rounded-lg overflow-x-auto my-2">
-            {children}
-          </pre>
-        ),
-        blockquote: ({ children }) => (
-          <blockquote className="border-l-3 border-gray-300 dark:border-gray-600 pl-3 my-2 text-gray-500 dark:text-gray-400 italic">
-            {children}
-          </blockquote>
-        ),
-        ul: ({ children }) => <ul className="list-disc pl-5 my-1 space-y-0.5">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal pl-5 my-1 space-y-0.5">{children}</ol>,
-        li: ({ children }) => <li className="text-sm">{children}</li>,
-        h1: ({ children }) => <h1 className="text-lg font-bold mt-3 mb-1">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-base font-bold mt-3 mb-1">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-bold mt-2 mb-1">{children}</h3>,
-        p: ({ children }) => <p className="my-1.5 leading-relaxed">{children}</p>,
-        table: ({ children }) => (
-          <div className="overflow-x-auto my-2">
-            <table className="min-w-full text-xs border border-gray-200 dark:border-gray-700 rounded">
-              {children}
-            </table>
-          </div>
-        ),
-        th: ({ children }) => (
-          <th className="bg-gray-50 dark:bg-gray-800 px-2 py-1 border border-gray-200 dark:border-gray-700 text-left font-semibold">
-            {children}
-          </th>
-        ),
-        td: ({ children }) => (
-          <td className="px-2 py-1 border border-gray-200 dark:border-gray-700">
-            {children}
-          </td>
-        ),
-        hr: () => <hr className="my-3 border-gray-200 dark:border-gray-700" />,
-        input: ({ checked, ...props }) => (
-          <input type="checkbox" checked={checked} readOnly className="mr-1.5 rounded" {...props} />
-        ),
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-}
-
-/* ── Collapsible Comment ───────────────────────────────────── */
-
-function CommentItem({ comment, defaultExpanded }: { comment: Comment; defaultExpanded: boolean }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const previewText = comment.body.slice(0, 80).replace(/\n/g, ' ');
-
-  return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
-      >
-        {expanded ? (
-          <ChevronDown size={12} className="text-gray-400 shrink-0" />
-        ) : (
-          <ChevronRight size={12} className="text-gray-400 shrink-0" />
-        )}
-        {comment.author_avatar ? (
-          <img src={comment.author_avatar} alt={comment.author} className="w-4 h-4 rounded-full shrink-0" />
-        ) : (
-          <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
-        )}
-        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
-          {comment.author}
-        </span>
-        <span className="text-[10px] text-gray-400 shrink-0">
-          {timeAgo(comment.created_at)}
-        </span>
-        {!expanded && (
-          <span className="text-xs text-gray-400 dark:text-gray-500 truncate ml-1">
-            {previewText}{comment.body.length > 80 ? '…' : ''}
-          </span>
-        )}
-      </button>
-      {expanded && (
-        <div className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 break-words leading-relaxed border-t border-gray-200 dark:border-gray-700">
-          <MarkdownContent content={comment.body} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Diff File Item ────────────────────────────────────────── */
-
-function DiffFileItem({ file }: { file: PRFile }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-left"
-      >
-        {file.patch ? (
-          expanded ? (
-            <ChevronDown size={12} className="text-gray-400 shrink-0" />
-          ) : (
-            <ChevronRight size={12} className="text-gray-400 shrink-0" />
-          )
-        ) : (
-          <span className="w-3 shrink-0" />
-        )}
-        <span className={`text-[10px] font-mono font-bold ${fileStatusColor(file.status)} shrink-0`}>
-          {fileStatusLabel(file.status)}
-        </span>
-        <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate">
-          {file.filename}
-        </span>
-        <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono shrink-0">
-          <span className="text-green-600 dark:text-green-400">+{file.additions}</span>
-          <span className="text-red-500 dark:text-red-400">-{file.deletions}</span>
-        </span>
-      </button>
-      {expanded && file.patch && (
-        <div className="border-t border-gray-200 dark:border-gray-700 overflow-x-auto">
-          <pre className="text-[11px] font-mono leading-[1.6] p-0 m-0">
-            {file.patch.split('\n').map((line, i) => {
-              let bgClass = '';
-              let textClass = 'text-gray-600 dark:text-gray-400';
-              if (line.startsWith('+') && !line.startsWith('+++')) {
-                bgClass = 'bg-green-50 dark:bg-green-900/20';
-                textClass = 'text-green-800 dark:text-green-300';
-              } else if (line.startsWith('-') && !line.startsWith('---')) {
-                bgClass = 'bg-red-50 dark:bg-red-900/20';
-                textClass = 'text-red-800 dark:text-red-300';
-              } else if (line.startsWith('@@')) {
-                bgClass = 'bg-blue-50 dark:bg-blue-900/20';
-                textClass = 'text-blue-600 dark:text-blue-400';
-              }
-              return (
-                <div key={i} className={`px-3 ${bgClass} ${textClass}`}>
-                  {line}
-                </div>
-              );
-            })}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Main DetailPanel ──────────────────────────────────────── */
-
 export default function DetailPanel({
   detail,
   repoFullName,
@@ -315,75 +40,8 @@ export default function DetailPanel({
   onClose,
   onNavigate,
 }: Props) {
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [loadingComments, setLoadingComments] = useState(false);
-  const [prFiles, setPrFiles] = useState<PRFile[]>([]);
-  const [loadingFiles, setLoadingFiles] = useState(false);
-
-  useEffect(() => {
-    if (!detail) {
-      setComments([]);
-      setPrFiles([]);
-      return;
-    }
-
-    const [owner, name] = repoFullName.split('/');
-    const number = detail.item.github_number;
-
-    setLoadingComments(true);
-    setComments([]);
-
-    fetch(`/api/comments?owner=${owner}&name=${name}&number=${number}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) setComments(data);
-      })
-      .catch(() => {})
-      .finally(() => setLoadingComments(false));
-
-    // Fetch PR files if it's a PR
-    if (detail.type === 'pr') {
-      setLoadingFiles(true);
-      setPrFiles([]);
-      fetch(`/api/pr-files?owner=${owner}&name=${name}&number=${number}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (Array.isArray(data)) setPrFiles(data);
-        })
-        .catch(() => {})
-        .finally(() => setLoadingFiles(false));
-    } else {
-      setPrFiles([]);
-    }
-  }, [detail, repoFullName]);
-
-  // Find linked items
-  const linkedItems = useMemo(() => {
-    if (!detail) return [];
-    const result: DetailItem[] = [];
-
-    if (detail.type === 'issue') {
-      const issueId = detail.item.id;
-      const linkedPrIds = relationships
-        .filter((r) => r.issue_id === issueId)
-        .map((r) => r.pr_id);
-      for (const prId of linkedPrIds) {
-        const pr = pullRequests.find((p) => p.id === prId);
-        if (pr) result.push({ type: 'pr', item: pr });
-      }
-    } else {
-      const prId = detail.item.id;
-      const linkedIssueIds = relationships
-        .filter((r) => r.pr_id === prId)
-        .map((r) => r.issue_id);
-      for (const issueId of linkedIssueIds) {
-        const issue = issues.find((i) => i.id === issueId);
-        if (issue) result.push({ type: 'issue', item: issue });
-      }
-    }
-
-    return result;
-  }, [detail, relationships, issues, pullRequests]);
+  const { comments, loadingComments, prFiles, loadingFiles, linkedItems } =
+    useDetailContent(detail, repoFullName, relationships, issues, pullRequests);
 
   if (!detail) return null;
 
