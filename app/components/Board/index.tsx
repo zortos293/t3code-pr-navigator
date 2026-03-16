@@ -13,7 +13,7 @@ import {
   MarkerType,
   BackgroundVariant,
 } from '@xyflow/react';
-import type { Connection, Node, Edge, NodeProps } from '@xyflow/react';
+import type { Connection, Node, Edge, NodeProps, ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import IssueNode from './IssueNode';
@@ -24,7 +24,14 @@ import DetailPanel from './DetailPanel';
 import type { Issue, PullRequest } from '@/app/lib/db';
 import type { Relationship, DetailItem } from '@/app/lib/types';
 import { buildClusteredNodes } from '@/app/lib/boardLayout';
+import { ISSUE_WIDTH, PR_WIDTH, ISSUE_CARD_HEIGHT, PR_CARD_HEIGHT } from '@/app/lib/boardConfig';
 import { RotateCcw } from 'lucide-react';
+
+export type BoardFocusRequest = {
+  nodeId: string;
+  detail: DetailItem;
+  nonce: number;
+};
 
 type Props = {
   issues: Issue[];
@@ -33,11 +40,18 @@ type Props = {
   repoFullName: string;
   onCreateRelationship?: (issueId: number, prId: number) => void;
   onDeleteRelationship?: (id: number) => void;
+  focusRequest?: BoardFocusRequest | null;
 };
 
 /* ── Cluster group background node ──────────────────────────── */
 
 type ClusterGroupData = { width: number; height: number };
+type RelationshipEdgeData = {
+  label: string;
+  confidence: number;
+  relationshipId: number;
+};
+type RelationshipEdge = Edge<RelationshipEdgeData, 'custom'>;
 
 function ClusterGroupComponent({ data }: NodeProps) {
   const d = data as unknown as ClusterGroupData;
@@ -72,16 +86,18 @@ export default function Board({
   repoFullName,
   onCreateRelationship,
   onDeleteRelationship,
+  focusRequest,
 }: Props) {
   const [hasUserMoved, setHasUserMoved] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<DetailItem | null>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<Node, RelationshipEdge> | null>(null);
 
   const initialNodes = useMemo(
     () => buildClusteredNodes(issues, pullRequests, relationships, repoFullName),
     [issues, pullRequests, relationships, repoFullName]
   );
 
-  const initialEdges = useMemo(
+  const initialEdges = useMemo<RelationshipEdge[]>(
     () =>
       relationships.map((rel) => ({
         id: `rel-${rel.id}`,
@@ -109,7 +125,7 @@ export default function Board({
   }, [relationships]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<RelationshipEdge>(initialEdges);
 
   useEffect(() => {
     setNodes(initialNodes);
@@ -119,6 +135,31 @@ export default function Board({
   useEffect(() => {
     setEdges(initialEdges);
   }, [initialEdges, setEdges]);
+
+  useEffect(() => {
+    if (!focusRequest || !reactFlowInstance) return;
+
+    const targetNode = reactFlowInstance.getNode(focusRequest.nodeId);
+    if (!targetNode) return;
+
+    const nodeX = targetNode.position.x;
+    const nodeY = targetNode.position.y;
+    const nodeWidth = focusRequest.detail.type === 'issue' ? ISSUE_WIDTH : PR_WIDTH;
+    const nodeHeight = focusRequest.detail.type === 'issue' ? ISSUE_CARD_HEIGHT : PR_CARD_HEIGHT;
+
+    setSelectedDetail(focusRequest.detail);
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
+        const shouldSelect = node.id === focusRequest.nodeId;
+        if (node.selected === shouldSelect) return node;
+        return { ...node, selected: shouldSelect };
+      })
+    );
+    void reactFlowInstance.setCenter(nodeX + nodeWidth / 2, nodeY + nodeHeight / 2, {
+      zoom: 0.95,
+      duration: 450,
+    });
+  }, [focusRequest, reactFlowInstance, setNodes]);
 
   const resetLayout = useCallback(() => {
     setNodes(initialNodes);
@@ -159,7 +200,10 @@ export default function Board({
 
   const handlePaneClick = useCallback(() => {
     setSelectedDetail(null);
-  }, []);
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => (node.selected ? { ...node, selected: false } : node))
+    );
+  }, [setNodes]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -177,7 +221,7 @@ export default function Board({
             type: 'custom',
             markerEnd: { type: MarkerType.ArrowClosed, color: '#8b5cf6' },
             data: { label: 'solved by', confidence: 1, relationshipId: 0 },
-          },
+          } as RelationshipEdge,
           eds
         )
       );
@@ -186,12 +230,11 @@ export default function Board({
   );
 
   const onEdgesDelete = useCallback(
-    (deletedEdges: Edge[]) => {
+    (deletedEdges: RelationshipEdge[]) => {
       if (onDeleteRelationship) {
         for (const edge of deletedEdges) {
-          const edgeData = edge.data as { relationshipId?: number } | undefined;
-          if (edgeData?.relationshipId) {
-            onDeleteRelationship(edgeData.relationshipId);
+          if (edge.data?.relationshipId) {
+            onDeleteRelationship(edge.data.relationshipId);
           }
         }
       }
@@ -204,6 +247,7 @@ export default function Board({
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onInit={setReactFlowInstance}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
