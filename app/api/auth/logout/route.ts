@@ -4,7 +4,7 @@ import { SESSION_COOKIE_NAME } from '@/app/lib/authUtils';
 
 export async function POST(request: NextRequest) {
   try {
-    revokeAuthSession(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+    await revokeAuthSession(request.cookies.get(SESSION_COOKIE_NAME)?.value);
     const response = NextResponse.json({ success: true });
     return clearSessionCookie(response);
   } catch (error) {

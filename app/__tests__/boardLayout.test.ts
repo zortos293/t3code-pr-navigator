@@ -118,7 +118,7 @@ describe('buildClusteredNodes', () => {
       }),
       makeIssue(3, 30, {
         title: 'Polish onboarding flow',
-        labels: '["Enchancement"]',
+        labels: '[{"name":"Enchancement"}]',
         created_at: '2024-03-01T00:00:00Z',
       }),
       makeIssue(4, 40, {
@@ -146,6 +146,69 @@ describe('buildClusteredNodes', () => {
       'issue-3',
       'issue-2',
       'issue-5',
+    ]);
+  });
+
+  it('categorizes standalone pull requests and sorts each section newest first', () => {
+    const prs = [
+      makePR(1, 10, {
+        title: 'Routine maintenance one',
+        labels: '["vouch:trusted","size:XL"]',
+        created_at: '2024-01-01T00:00:00Z',
+      }),
+      makePR(2, 20, {
+        title: 'Routine maintenance two',
+        labels: '["vouch:trusted","size:S"]',
+        created_at: '2024-02-01T00:00:00Z',
+      }),
+      makePR(3, 30, {
+        title: 'Routine maintenance three',
+        labels: '["vouch:unvouched","size:XXL"]',
+        created_at: '2024-03-01T00:00:00Z',
+      }),
+      makePR(4, 40, {
+        title: 'Routine maintenance four',
+        labels: '["vouch:unvouched","size:M"]',
+        created_at: '2024-04-01T00:00:00Z',
+      }),
+    ];
+
+    const nodes = buildClusteredNodes([], prs, [], 'owner/repo');
+
+    expect(nodes.find((n) => n.id === 'lane-pull-request-uncategorized')).toBeDefined();
+
+    const prNodes = nodes.filter((n) => n.type === 'pr');
+    expect(prNodes.map((node) => node.id)).toEqual([
+      'pr-2',
+      'pr-1',
+      'pr-4',
+      'pr-3',
+    ]);
+  });
+
+  it('sorts connected pull requests by vouch and size priority', () => {
+    const issues = [makeIssue(1, 10)];
+    const prs = [
+      makePR(2, 20, { labels: '["vouch:unvouched","size:XXL"]' }),
+      makePR(3, 30, { labels: '["vouch:trusted","size:XL"]' }),
+      makePR(4, 40, { labels: '["vouch:trusted","size:S"]' }),
+      makePR(5, 50, { labels: '["vouch:unvouched","size:M"]' }),
+    ];
+    const rels: Relationship[] = [
+      { id: 1, issue_id: 1, pr_id: 2, relationship_type: 'solves', confidence: 1, issue_number: 10, pr_number: 20 },
+      { id: 2, issue_id: 1, pr_id: 3, relationship_type: 'solves', confidence: 1, issue_number: 10, pr_number: 30 },
+      { id: 3, issue_id: 1, pr_id: 4, relationship_type: 'solves', confidence: 1, issue_number: 10, pr_number: 40 },
+      { id: 4, issue_id: 1, pr_id: 5, relationship_type: 'solves', confidence: 1, issue_number: 10, pr_number: 50 },
+    ];
+
+    const nodes = buildClusteredNodes(issues, prs, rels, 'owner/repo');
+
+    const prNodes = nodes.filter((n) => n.type === 'pr');
+    expect(prNodes.map((node) => node.id)).toEqual([
+      'pr-4',
+      'pr-3',
+      'pr-5',
+      'pr-2',
     ]);
   });
 

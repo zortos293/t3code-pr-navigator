@@ -73,8 +73,8 @@ export function useBoard(repoId: number | null) {
       const repo = await res.json();
       const projection = projectRepoBoardData(
         repo.issues || [],
-        repo.pull_requests || [],
-        repo.relationships || [],
+        repo.tracked_pull_requests || repo.pull_requests || [],
+        repo.tracked_relationships || repo.relationships || [],
       );
       setData({
         issues: projection.openIssues,
