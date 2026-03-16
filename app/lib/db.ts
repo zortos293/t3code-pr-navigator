@@ -1,6 +1,9 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { loadLocalEnv } from './serverEnv';
+
+loadLocalEnv();
 
 const DB_PATH = process.env.DATABASE_URL || './data/pr-navigator.db';
 

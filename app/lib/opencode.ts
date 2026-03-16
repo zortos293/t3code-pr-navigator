@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import type { CopilotClient } from '@github/copilot-sdk';
 import { analysisJobs, type Issue, type PullRequest } from './db';
+import { loadLocalEnv } from './serverEnv';
+
+loadLocalEnv();
 
 type AnalysisResult = {
   solves: boolean;
@@ -47,68 +47,115 @@ type DuplicateBatch = {
   comparisonIssues: Issue[];
 };
 
+type OpenCodeGoTextPart = {
+  type?: string;
+  text?: string;
+};
+
+type OpenCodeGoResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | OpenCodeGoTextPart[] | null;
+    };
+  }>;
+  error?: {
+    message?: string;
+  };
+};
+
 const BULK_BATCH_SIZE = 100;
 const MAX_RELATIONSHIP_PROMPT_CHARS = 24_000;
 const MAX_DUPLICATE_PROMPT_CHARS = 24_000;
 const RELATIONSHIP_CONFIDENCE_THRESHOLD = 0.5;
 const DUPLICATE_CONFIDENCE_THRESHOLD = 0.6;
-const COPILOT_TIMEOUT_MS = 90_000;
+const OPENCODE_TIMEOUT_MS = 90_000;
 const TITLE_LIMIT = 72;
 const ISSUE_BODY_LIMIT = 56;
 const PR_BODY_LIMIT = 56;
 const LABEL_LIMIT = 3;
 const LABEL_NAME_LIMIT = 20;
-const COPILOT_MODEL = process.env.COPILOT_MODEL?.trim() || 'gpt-5.4';
-const execFileAsync = promisify(execFile);
+const OPENCODE_GO_ENDPOINT = process.env.OPENCODE_GO_ENDPOINT?.trim() || 'https://opencode.ai/zen/go/v1/chat/completions';
+const OPENCODE_GO_MODEL = process.env.OPENCODE_GO_MODEL?.trim() || 'kimi-k2.5';
+const SYSTEM_MESSAGE = 'You analyze GitHub issues and pull requests. Respond with valid JSON only and never wrap it in markdown.';
 
-async function createCopilotClient(): Promise<CopilotClient> {
-  const { CopilotClient } = await import('@github/copilot-sdk');
-  const token = process.env.COPILOT_TOKEN;
-
-  if (token) {
-    return new CopilotClient({
-      githubToken: token,
-      useLoggedInUser: false,
-      env: process.env,
-    });
+function getOpenCodeApiKey(): string {
+  loadLocalEnv();
+  const apiKey = process.env.OPENCODE_GO_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error('OpenCode Go is not configured. Set OPENCODE_GO_API_KEY in .local.env or .env.local.');
   }
 
-  return new CopilotClient({
-    useLoggedInUser: true,
-    env: process.env,
-  });
+  return apiKey;
 }
 
-async function callCopilotAPI(client: CopilotClient, prompt: string): Promise<string> {
-  const { approveAll } = await import('@github/copilot-sdk');
-  const session = await client.createSession({
-    model: COPILOT_MODEL,
-    reasoningEffort: 'low',
-    availableTools: [],
-    infiniteSessions: { enabled: false },
-    streaming: false,
-    onPermissionRequest: approveAll,
-    systemMessage: {
-      content: 'You analyze GitHub issues and pull requests. Respond with valid JSON only and never wrap it in markdown.',
-    },
-  });
+function extractAssistantContent(content: string | OpenCodeGoTextPart[] | null | undefined): string | null {
+  if (typeof content === 'string') {
+    const text = content.trim();
+    return text.length > 0 ? text : null;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const text = content
+    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text!.trim())
+    .filter((part) => part.length > 0)
+    .join('\n')
+    .trim();
+
+  return text.length > 0 ? text : null;
+}
+
+async function callOpenCodeGoAPI(prompt: string): Promise<string> {
+  const apiKey = getOpenCodeApiKey();
 
   try {
-    const response = await session.sendAndWait({ prompt }, COPILOT_TIMEOUT_MS);
-    const content = response?.data.content;
-    if (typeof content !== 'string' || content.trim().length === 0) {
-      throw new Error('Copilot SDK returned an empty response');
+    const response = await fetch(OPENCODE_GO_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: OPENCODE_GO_MODEL,
+        stream: false,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: SYSTEM_MESSAGE },
+          { role: 'user', content: prompt },
+        ],
+      }),
+      signal: AbortSignal.timeout(OPENCODE_TIMEOUT_MS),
+    });
+
+    const responseText = await response.text();
+    let parsedResponse: OpenCodeGoResponse | null = null;
+
+    try {
+      parsedResponse = JSON.parse(responseText) as OpenCodeGoResponse;
+    } catch {
+      parsedResponse = null;
+    }
+
+    if (!response.ok) {
+      const message = parsedResponse?.error?.message?.trim() || responseText.trim() || response.statusText;
+      throw new Error(`OpenCode Go request failed (${response.status}): ${message}`);
+    }
+
+    const content = extractAssistantContent(parsedResponse?.choices?.[0]?.message?.content);
+    if (!content) {
+      throw new Error('OpenCode Go returned an empty response');
     }
 
     return content;
   } catch (error) {
-    if (error instanceof Error && error.message.toLowerCase().includes('timeout')) {
-      throw new Error(`Copilot SDK request timed out after ${COPILOT_TIMEOUT_MS / 1000} seconds`);
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+      throw new Error(`OpenCode Go request timed out after ${OPENCODE_TIMEOUT_MS / 1000} seconds`);
     }
 
     throw error;
-  } finally {
-    await session.disconnect();
   }
 }
 
@@ -232,10 +279,10 @@ export function extractJsonPayload(text: string): string | null {
   return findBalancedJson(text.trim());
 }
 
-export function parseCopilotJsonResponse<T>(text: string): T {
+export function parseModelJsonResponse<T>(text: string): T {
   const payload = extractJsonPayload(text);
   if (!payload) {
-    throw new Error('Copilot response did not contain valid JSON');
+    throw new Error('Model response did not contain valid JSON');
   }
 
   return JSON.parse(payload) as T;
@@ -270,7 +317,7 @@ function chunkItemsToFit<T>(items: T[], maxItems: number, fitsChunk: (chunk: T[]
     }
 
     if (end === start) {
-      throw new Error('A single analysis item exceeded the Copilot prompt size limit');
+      throw new Error('A single analysis item exceeded the AI prompt size limit');
     }
 
     chunks.push(items.slice(start, end));
@@ -419,7 +466,7 @@ function isFiniteConfidence(value: unknown): value is number {
 
 function normalizeRelationshipMatches(matches: unknown, batch: RelationshipBatch): RelationshipMatch[] {
   if (!Array.isArray(matches)) {
-    throw new Error('Copilot relationship response was missing a matches array');
+    throw new Error('Relationship response was missing a matches array');
   }
 
   const validIssueNumbers = new Set(batch.issues.map((issue) => issue.github_number));
@@ -457,7 +504,7 @@ function normalizeRelationshipMatches(matches: unknown, batch: RelationshipBatch
 
 function normalizeDuplicateMatches(matches: unknown, batch: DuplicateBatch): DuplicateMatch[] {
   if (!Array.isArray(matches)) {
-    throw new Error('Copilot duplicate response was missing a duplicates array');
+    throw new Error('Duplicate response was missing a duplicates array');
   }
 
   const primaryIssueNumbers = new Set(batch.primaryIssues.map((issue) => issue.github_number));
@@ -510,31 +557,23 @@ function normalizeDuplicateMatches(matches: unknown, batch: DuplicateBatch): Dup
   return [...deduped.values()];
 }
 
-async function analyzeRelationshipBatch(client: CopilotClient, batch: RelationshipBatch): Promise<RelationshipMatch[]> {
-  const response = await callCopilotAPI(client, buildRelationshipPrompt(batch));
-  const parsed = parseCopilotJsonResponse<RelationshipBatchResponse>(response);
+async function analyzeRelationshipBatch(batch: RelationshipBatch): Promise<RelationshipMatch[]> {
+  const response = await callOpenCodeGoAPI(buildRelationshipPrompt(batch));
+  const parsed = parseModelJsonResponse<RelationshipBatchResponse>(response);
   return normalizeRelationshipMatches(parsed.matches, batch);
 }
 
-async function analyzeDuplicateBatch(client: CopilotClient, batch: DuplicateBatch): Promise<DuplicateMatch[]> {
-  const response = await callCopilotAPI(client, buildDuplicatePrompt(batch));
-  const parsed = parseCopilotJsonResponse<DuplicateBatchResponse>(response);
+async function analyzeDuplicateBatch(batch: DuplicateBatch): Promise<DuplicateMatch[]> {
+  const response = await callOpenCodeGoAPI(buildDuplicatePrompt(batch));
+  const parsed = parseModelJsonResponse<DuplicateBatchResponse>(response);
   return normalizeDuplicateMatches(parsed.duplicates, batch);
 }
 
 export async function analyzeIssuePRRelationship(issue: Issue, pr: PullRequest): Promise<AnalysisResult> {
-  const client = await createCopilotClient();
-  await client.start();
-
-  let match: RelationshipMatch | undefined;
-  try {
-    [match] = await analyzeRelationshipBatch(client, {
-      issues: [issue],
-      pullRequests: [pr],
-    });
-  } finally {
-    await client.stop();
-  }
+  const [match] = await analyzeRelationshipBatch({
+    issues: [issue],
+    pullRequests: [pr],
+  });
 
   if (!match) {
     return { solves: false, confidence: 0, reason: 'No strong relationship found' };
@@ -548,18 +587,10 @@ export async function analyzeIssuePRRelationship(issue: Issue, pr: PullRequest):
 }
 
 export async function findDuplicateIssues(issue1: Issue, issue2: Issue): Promise<DuplicateResult> {
-  const client = await createCopilotClient();
-  await client.start();
-
-  let match: DuplicateMatch | undefined;
-  try {
-    [match] = await analyzeDuplicateBatch(client, {
-      primaryIssues: [issue1],
-      comparisonIssues: [issue2],
-    });
-  } finally {
-    await client.stop();
-  }
+  const [match] = await analyzeDuplicateBatch({
+    primaryIssues: [issue1],
+    comparisonIssues: [issue2],
+  });
 
   if (!match) {
     return { isDuplicate: false, confidence: 0, reason: 'No strong duplicate found' };
@@ -614,75 +645,69 @@ export async function runAnalysis(repoId: number, jobId?: number) {
     const issueByNumber = new Map(allIssues.map((issue) => [issue.github_number, issue] as const));
     const prByNumber = new Map(allPRs.map((pr) => [pr.github_number, pr] as const));
     const seenDuplicatePairs = new Set<string>();
-    const client = await createCopilotClient();
 
-    await client.start();
-    try {
-      for (const batch of relationshipBatches) {
-        const matches = await analyzeRelationshipBatch(client, batch);
+    for (const batch of relationshipBatches) {
+      const matches = await analyzeRelationshipBatch(batch);
 
-        for (const match of matches) {
-          if (match.confidence < RELATIONSHIP_CONFIDENCE_THRESHOLD) {
-            continue;
-          }
-
-          const issue = issueByNumber.get(match.issue_number);
-          const pr = prByNumber.get(match.pr_number);
-          if (!issue || !pr) {
-            continue;
-          }
-
-          relsDb.create({
-            issue_id: issue.id,
-            pr_id: pr.id,
-            relationship_type: 'solves',
-            confidence: match.confidence,
-          });
-          relationshipsCreated++;
+      for (const match of matches) {
+        if (match.confidence < RELATIONSHIP_CONFIDENCE_THRESHOLD) {
+          continue;
         }
 
-        completedBatches++;
-        analysisJobs.update(analysisJobId, {
-          progress: calculateProgress(completedBatches, totalBatches),
-        });
-      }
-
-      for (const batch of duplicateBatches) {
-        const matches = await analyzeDuplicateBatch(client, batch);
-
-        for (const match of matches) {
-          if (match.confidence < DUPLICATE_CONFIDENCE_THRESHOLD) {
-            continue;
-          }
-
-          const issue = issueByNumber.get(match.issue_number);
-          const duplicateIssue = issueByNumber.get(match.duplicate_issue_number);
-          if (!issue || !duplicateIssue || issue.id === duplicateIssue.id) {
-            continue;
-          }
-
-          const pairKey = `${Math.min(issue.id, duplicateIssue.id)}:${Math.max(issue.id, duplicateIssue.id)}`;
-          if (seenDuplicatePairs.has(pairKey)) {
-            continue;
-          }
-          seenDuplicatePairs.add(pairKey);
-
-          dupsDb.create({
-            original_issue_id: Math.min(issue.id, duplicateIssue.id),
-            duplicate_issue_id: Math.max(issue.id, duplicateIssue.id),
-            confidence: match.confidence,
-            reason: match.reason,
-          });
-          duplicatesCreated++;
+        const issue = issueByNumber.get(match.issue_number);
+        const pr = prByNumber.get(match.pr_number);
+        if (!issue || !pr) {
+          continue;
         }
 
-        completedBatches++;
-        analysisJobs.update(analysisJobId, {
-          progress: calculateProgress(completedBatches, totalBatches),
+        relsDb.create({
+          issue_id: issue.id,
+          pr_id: pr.id,
+          relationship_type: 'solves',
+          confidence: match.confidence,
         });
+        relationshipsCreated++;
       }
-    } finally {
-      await client.stop();
+
+      completedBatches++;
+      analysisJobs.update(analysisJobId, {
+        progress: calculateProgress(completedBatches, totalBatches),
+      });
+    }
+
+    for (const batch of duplicateBatches) {
+      const matches = await analyzeDuplicateBatch(batch);
+
+      for (const match of matches) {
+        if (match.confidence < DUPLICATE_CONFIDENCE_THRESHOLD) {
+          continue;
+        }
+
+        const issue = issueByNumber.get(match.issue_number);
+        const duplicateIssue = issueByNumber.get(match.duplicate_issue_number);
+        if (!issue || !duplicateIssue || issue.id === duplicateIssue.id) {
+          continue;
+        }
+
+        const pairKey = `${Math.min(issue.id, duplicateIssue.id)}:${Math.max(issue.id, duplicateIssue.id)}`;
+        if (seenDuplicatePairs.has(pairKey)) {
+          continue;
+        }
+        seenDuplicatePairs.add(pairKey);
+
+        dupsDb.create({
+          original_issue_id: Math.min(issue.id, duplicateIssue.id),
+          duplicate_issue_id: Math.max(issue.id, duplicateIssue.id),
+          confidence: match.confidence,
+          reason: match.reason,
+        });
+        duplicatesCreated++;
+      }
+
+      completedBatches++;
+      analysisJobs.update(analysisJobId, {
+        progress: calculateProgress(completedBatches, totalBatches),
+      });
     }
 
     analysisJobs.update(analysisJobId, {
@@ -708,15 +733,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
   return analysisJobs.getByRepoId(repoId).find((job) => job.id === analysisJobId);
 }
 
-export async function isCopilotConfigured(): Promise<boolean> {
-  if (process.env.COPILOT_TOKEN) {
-    return true;
-  }
-
-  try {
-    await execFileAsync('copilot', ['--version']);
-    return true;
-  } catch {
-    return false;
-  }
+export async function isOpenCodeConfigured(): Promise<boolean> {
+  loadLocalEnv();
+  return Boolean(process.env.OPENCODE_GO_API_KEY?.trim());
 }

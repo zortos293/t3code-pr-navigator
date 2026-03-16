@@ -4,8 +4,8 @@ import {
   buildRelationshipAnalysisBatches,
   chunkItems,
   extractJsonPayload,
-  parseCopilotJsonResponse,
-} from '../lib/copilot';
+  parseModelJsonResponse,
+} from '../lib/opencode';
 import type { Issue, PullRequest } from '../lib/db';
 
 function createIssue(number: number, overrides: Partial<Issue> = {}): Issue {
@@ -88,14 +88,14 @@ describe('duplicate batching', () => {
   });
 });
 
-describe('Copilot JSON parsing', () => {
+describe('model JSON parsing', () => {
   it('extracts fenced JSON payloads', () => {
     const payload = extractJsonPayload('```json\n{"matches":[{"issue_number":1}]}\n```');
     expect(payload).toBe('{"matches":[{"issue_number":1}]}');
   });
 
   it('parses JSON embedded in plain text', () => {
-    const parsed = parseCopilotJsonResponse<{ duplicates: Array<{ issue_number: number }> }>(
+    const parsed = parseModelJsonResponse<{ duplicates: Array<{ issue_number: number }> }>(
       'Here you go:\n{"duplicates":[{"issue_number":1}]}'
     );
 
