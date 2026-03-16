@@ -35,9 +35,10 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Tech Stack
 
-- Next.js 14 (App Router)
+- Next.js 16 (App Router)
+- React 19
 - React Flow (`@xyflow/react`)
 - SQLite (better-sqlite3)
-- Tailwind CSS
+- Tailwind CSS 4
 - Octokit (GitHub REST API)
 - Lucide React (icons)
