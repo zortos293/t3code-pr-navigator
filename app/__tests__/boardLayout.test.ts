@@ -3,7 +3,7 @@ import { buildClusteredNodes, createIssueNode, createPrNode } from '../lib/board
 import type { Issue, PullRequest } from '../lib/db';
 import type { Relationship } from '../lib/types';
 
-function makeIssue(id: number, github_number: number): Issue {
+function makeIssue(id: number, github_number: number, overrides: Partial<Issue> = {}): Issue {
   return {
     id,
     repo_id: 1,
@@ -17,10 +17,11 @@ function makeIssue(id: number, github_number: number): Issue {
     created_at: null,
     updated_at: null,
     closed_at: null,
+    ...overrides,
   };
 }
 
-function makePR(id: number, github_number: number): PullRequest {
+function makePR(id: number, github_number: number, overrides: Partial<PullRequest> = {}): PullRequest {
   return {
     id,
     repo_id: 1,
@@ -39,6 +40,7 @@ function makePR(id: number, github_number: number): PullRequest {
     updated_at: null,
     merged_at: null,
     closed_at: null,
+    ...overrides,
   };
 }
 
@@ -90,16 +92,61 @@ describe('buildClusteredNodes', () => {
     expect(nodes).toHaveLength(0);
   });
 
-  it('creates section header + card nodes for standalone issues', () => {
+  it('creates section header + card nodes for standalone bug issues', () => {
     const issues = [makeIssue(1, 10), makeIssue(2, 20)];
     const nodes = buildClusteredNodes(issues, [], [], 'owner/repo');
 
-    const header = nodes.find((n) => n.id === 'lane-issues');
+    const header = nodes.find((n) => n.id === 'lane-bugs');
     expect(header).toBeDefined();
     expect(header?.type).toBe('lane-header');
 
     const issueNodes = nodes.filter((n) => n.type === 'issue');
     expect(issueNodes).toHaveLength(2);
+  });
+
+  it('categorizes standalone issues and sorts each section newest first', () => {
+    const issues = [
+      makeIssue(1, 10, {
+        title: 'Intermittent failure',
+        labels: '["Bug"]',
+        created_at: '2024-01-01T00:00:00Z',
+      }),
+      makeIssue(2, 20, {
+        title: 'feat: add search filters',
+        labels: null,
+        created_at: '2024-02-01T00:00:00Z',
+      }),
+      makeIssue(3, 30, {
+        title: 'Polish onboarding flow',
+        labels: '["Enchancement"]',
+        created_at: '2024-03-01T00:00:00Z',
+      }),
+      makeIssue(4, 40, {
+        title: '[BUG] Latest regression',
+        labels: null,
+        created_at: '2024-04-01T00:00:00Z',
+      }),
+      makeIssue(5, 50, {
+        title: 'Routine housekeeping',
+        labels: null,
+        created_at: '2024-05-01T00:00:00Z',
+      }),
+    ];
+
+    const nodes = buildClusteredNodes(issues, [], [], 'owner/repo');
+
+    expect(nodes.find((n) => n.id === 'lane-bugs')).toBeDefined();
+    expect(nodes.find((n) => n.id === 'lane-features')).toBeDefined();
+    expect(nodes.find((n) => n.id === 'lane-uncategorized')).toBeDefined();
+
+    const issueNodes = nodes.filter((n) => n.type === 'issue');
+    expect(issueNodes.map((node) => node.id)).toEqual([
+      'issue-4',
+      'issue-1',
+      'issue-3',
+      'issue-2',
+      'issue-5',
+    ]);
   });
 
   it('creates connected work section with cluster backgrounds', () => {
@@ -118,7 +165,7 @@ describe('buildClusteredNodes', () => {
     expect(clusterBgs).toHaveLength(1);
 
     // Should not have standalone sections since all items are linked
-    const issueHeader = nodes.find((n) => n.id === 'lane-issues');
+    const issueHeader = nodes.find((n) => n.id === 'lane-bugs');
     expect(issueHeader).toBeUndefined();
   });
 

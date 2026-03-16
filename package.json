@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "postinstall": "node scripts/fix-vscode-jsonrpc.mjs",
     "lint": "bun run lint:oxlint && bun run lint:eslint",
     "lint:oxlint": "oxlint --react-plugin --vitest-plugin --nextjs-plugin --jsx-a11y-plugin .",
     "lint:eslint": "eslint . --ext .js,.jsx,.ts,.tsx",

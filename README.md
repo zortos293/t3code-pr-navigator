@@ -9,15 +9,15 @@ A visual board for navigating GitHub issues and pull requests. Add repositories,
 - **Label Badges** — Styled badges for `vouch:`, `size:`, `bug`, `enhancement` labels
 - **Line Stats** — Shows `+additions` / `-deletions` on each PR card
 - **Relationship Mapping** — Draw edges between issues and PRs to mark "solved by"
-- **AI Analysis** — Optional Copilot SDK integration for automatic relationship detection and duplicate finding
+- **AI Analysis** — Optional OpenCode Go integration for automatic relationship detection and duplicate finding
 - **Dark Mode** — Light / Auto / Dark theme toggle
 - **SQLite Storage** — Local database via better-sqlite3
 
 ## Quick Start
 
 ```bash
-cp .env.example .env.local
-# Add your GITHUB_TOKEN to .env.local
+cp .env.example .local.env
+# Add your GITHUB_TOKEN and OPENCODE_GO_API_KEY to .local.env
 
 bun install
 bun dev
@@ -32,7 +32,8 @@ This repository uses Bun as its package manager and commits `bun.lock` as the on
 | Variable | Required | Description |
 |---|---|---|
 | `GITHUB_TOKEN` | Recommended | GitHub personal access token (increases API rate limits) |
-| `COPILOT_TOKEN` | Optional | GitHub Copilot API token for AI analysis |
+| `OPENCODE_GO_API_KEY` | Optional | OpenCode Go API key used for AI analysis |
+| `OPENCODE_GO_MODEL` | No | OpenCode Go chat-completions model id (default: `kimi-k2.5`) |
 | `DATABASE_URL` | No | SQLite database path (default: `./data/pr-navigator.db`) |
 
 ## Tech Stack

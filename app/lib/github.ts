@@ -1,4 +1,7 @@
 import { Octokit } from '@octokit/rest';
+import { loadLocalEnv } from './serverEnv';
+
+loadLocalEnv();
 
 function getOctokit(): Octokit {
   const token = process.env.GITHUB_TOKEN;
