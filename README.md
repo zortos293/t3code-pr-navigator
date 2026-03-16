@@ -19,11 +19,13 @@ A visual board for navigating GitHub issues and pull requests. Add repositories,
 cp .env.example .env.local
 # Add your GITHUB_TOKEN to .env.local
 
-pnpm install
-pnpm dev
+bun install
+bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+This repository uses Bun as its package manager and commits `bun.lock` as the only lockfile.
 
 ## Environment Variables
 

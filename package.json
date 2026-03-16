@@ -2,11 +2,14 @@
   "name": "t3code-pr-navigator",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "bun@1.3.5",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "lint": "bun run lint:oxlint && bun run lint:eslint",
+    "lint:oxlint": "oxlint --react-plugin --vitest-plugin --nextjs-plugin --jsx-a11y-plugin .",
+    "lint:eslint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -34,14 +37,10 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.1.6",
     "jsdom": "^29.0.0",
+    "oxlint": "^1.55.0",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
   }
 }
