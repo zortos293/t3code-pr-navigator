@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { analysisJobs, repos } from '@/app/lib/db';
-import { runAnalysis, isCopilotConfigured } from '@/app/lib/copilot';
+import { runAnalysis, isOpenCodeConfigured } from '@/app/lib/opencode';
 
 type Params = { params: Promise<{ id: string }> };
 export const runtime = 'nodejs';
@@ -19,9 +19,9 @@ export async function POST(_request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
     }
 
-    if (!(await isCopilotConfigured())) {
+    if (!(await isOpenCodeConfigured())) {
       return NextResponse.json(
-        { error: 'Copilot SDK is not configured. Set COPILOT_TOKEN or authenticate GitHub Copilot CLI.' },
+        { error: 'OpenCode Go is not configured. Set OPENCODE_GO_API_KEY in .local.env or .env.local.' },
         { status: 400 }
       );
     }
