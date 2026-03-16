@@ -19,6 +19,18 @@ export type Comment = {
   updated_at: string;
 };
 
+export type ActivityEvent = {
+  id: number;
+  repo_id: number;
+  source: string;
+  entity_type: string;
+  entity_number: number | null;
+  action: string;
+  title: string | null;
+  details: string | null;
+  created_at: string;
+};
+
 export type PRFile = {
   filename: string;
   status: string;

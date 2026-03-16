@@ -1,18 +1,18 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { GitPullRequest, CircleDot, ArrowRight, Loader2, LayoutDashboard, History } from 'lucide-react';
-import ThemeToggle from './components/ThemeToggle';
-import RepoForm from './components/RepoForm';
-import Sidebar from './components/Sidebar';
-import Board from './components/Board';
-import ActivityList from './components/ActivityList';
-import ToastContainer from './components/Toast/ToastContainer';
-import { useRepos } from './hooks/useRepos';
-import { useBoard } from './hooks/useBoard';
-import { useSyncProgress } from './hooks/useSyncProgress';
+import { useCallback, useState } from 'react';
+import { GitPullRequest, CircleDot, ArrowRight, Loader2, LayoutDashboard } from 'lucide-react';
+import ThemeToggle from './ThemeToggle';
+import RepoForm from './RepoForm';
+import Sidebar from './Sidebar';
+import Board from './Board';
+import ToastContainer from './Toast/ToastContainer';
+import LogoutButton from './LogoutButton';
+import { useRepos } from '../hooks/useRepos';
+import { useBoard } from '../hooks/useBoard';
+import { useSyncProgress } from '../hooks/useSyncProgress';
 
-export default function Home() {
+export default function AppShell() {
   const [selectedRepoId, setSelectedRepoId] = useState<number | null>(null);
   const [syncingId, setSyncingId] = useState<number | null>(null);
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
@@ -41,20 +41,22 @@ export default function Home() {
     } finally {
       setSyncingId(null);
     }
-  }, [syncRepo, selectedRepoId, board]);
+  }, [board, selectedRepoId, syncRepo]);
 
   const handleAnalyze = useCallback(async (id: number) => {
     setAnalyzingId(id);
     try {
       await analyzeRepo(id);
-      if (selectedRepoId === id) board.refresh();
+      if (selectedRepoId === id) {
+        await board.refresh();
+      }
       await refreshRepos();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Analysis failed');
     } finally {
       setAnalyzingId(null);
     }
-  }, [analyzeRepo, selectedRepoId, board, refreshRepos]);
+  }, [analyzeRepo, board, refreshRepos, selectedRepoId]);
 
   return (
     <div className="h-screen flex flex-col">
@@ -72,11 +74,7 @@ export default function Home() {
               </span>
               <span className="flex items-center gap-1">
                 <GitPullRequest size={12} className="text-purple-500" />
-                {board.openPullRequestCount} open PRs
-              </span>
-              <span className="flex items-center gap-1">
-                <History size={12} className="text-sky-500" />
-                {board.trackedPullRequestCount} tracked PRs
+                {board.pullRequests.length} PRs
               </span>
               {board.relationships.length > 0 && (
                 <span className="flex items-center gap-1">
@@ -87,6 +85,7 @@ export default function Home() {
             </div>
           )}
           <ThemeToggle />
+          <LogoutButton />
         </div>
       </header>
 
@@ -106,7 +105,7 @@ export default function Home() {
           />
         </aside>
 
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 relative">
           {!selectedRepoId ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center max-w-sm">
@@ -140,32 +139,23 @@ export default function Home() {
                 <p className="text-sm text-gray-500 dark:text-gray-400">Loading board data...</p>
               </div>
             </div>
-          ) : (
-            <div className="flex h-full min-h-0 flex-col xl:flex-row">
-              <div className="min-h-0 min-w-0 flex-1 relative">
-                {board.issues.length === 0 && board.pullRequests.length === 0 ? (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center max-w-sm">
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        No open issues or active pull requests found for this repository.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <Board
-                    issues={board.issues}
-                    pullRequests={board.pullRequests}
-                    relationships={board.relationships}
-                    repoFullName={board.repoFullName}
-                    onCreateRelationship={board.createRelationship}
-                    onDeleteRelationship={board.deleteRelationship}
-                  />
-                )}
+          ) : board.issues.length === 0 && board.pullRequests.length === 0 ? (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center max-w-sm">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  No open issues or pull requests found for this repository.
+                </p>
               </div>
-              <aside className="h-[22rem] shrink-0 border-t border-gray-200 dark:border-gray-800 xl:h-auto xl:w-[24rem] xl:border-l xl:border-t-0">
-                <ActivityList events={board.activity} repoFullName={board.repoFullName} />
-              </aside>
             </div>
+          ) : (
+            <Board
+              issues={board.issues}
+              pullRequests={board.pullRequests}
+              relationships={board.relationships}
+              repoFullName={board.repoFullName}
+              onCreateRelationship={board.createRelationship}
+              onDeleteRelationship={board.deleteRelationship}
+            />
           )}
         </main>
       </div>

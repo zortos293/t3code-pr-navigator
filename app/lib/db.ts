@@ -118,6 +118,19 @@ function initializeSchema(db: Database.Database) {
       completed_at DATETIME,
       FOREIGN KEY (repo_id) REFERENCES repositories(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS activity_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_id INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'sync',
+      entity_type TEXT NOT NULL,
+      entity_number INTEGER,
+      action TEXT NOT NULL,
+      title TEXT,
+      details TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (repo_id) REFERENCES repositories(id) ON DELETE CASCADE
+    );
   `);
 }
 
@@ -199,6 +212,18 @@ export type AnalysisJob = {
   completed_at: string | null;
 };
 
+export type ActivityEvent = {
+  id: number;
+  repo_id: number;
+  source: string;
+  entity_type: string;
+  entity_number: number | null;
+  action: string;
+  title: string | null;
+  details: string | null;
+  created_at: string;
+};
+
 export const repos = {
   getAll(): Repository[] {
     return getDb().prepare('SELECT * FROM repositories ORDER BY updated_at DESC').all() as Repository[];
@@ -244,6 +269,10 @@ export const repos = {
 export const issues = {
   getByRepoId(repoId: number): Issue[] {
     return getDb().prepare('SELECT * FROM issues WHERE repo_id = ? ORDER BY github_number DESC').all(repoId) as Issue[];
+  },
+
+  getOpenByRepoId(repoId: number): Issue[] {
+    return getDb().prepare('SELECT * FROM issues WHERE repo_id = ? AND state = ? ORDER BY github_number DESC').all(repoId, 'open') as Issue[];
   },
 
   getById(id: number): Issue | undefined {
@@ -418,5 +447,70 @@ export const analysisJobs = {
 
   getByRepoId(repoId: number): AnalysisJob[] {
     return getDb().prepare('SELECT * FROM analysis_jobs WHERE repo_id = ? ORDER BY id DESC').all(repoId) as AnalysisJob[];
+  },
+};
+
+export const activityEvents = {
+  getByRepoId(repoId: number, limit = 60): ActivityEvent[] {
+    return getDb().prepare(`
+      SELECT *
+      FROM activity_events
+      WHERE repo_id = ?
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(repoId, limit) as ActivityEvent[];
+  },
+
+  create(event: Omit<ActivityEvent, 'id' | 'created_at'>): ActivityEvent {
+    const stmt = getDb().prepare(`
+      INSERT INTO activity_events (repo_id, source, entity_type, entity_number, action, title, details)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const result = stmt.run(
+      event.repo_id,
+      event.source,
+      event.entity_type,
+      event.entity_number,
+      event.action,
+      event.title,
+      event.details,
+    );
+    return getDb().prepare('SELECT * FROM activity_events WHERE id = ?').get(result.lastInsertRowid) as ActivityEvent;
+  },
+
+  createMany(
+    repoId: number,
+    events: Array<{
+      source?: string;
+      entity_type: string;
+      entity_number: number | null;
+      action: string;
+      title: string | null;
+      details: string | null;
+    }>,
+  ): void {
+    if (events.length === 0) {
+      return;
+    }
+
+    const stmt = getDb().prepare(`
+      INSERT INTO activity_events (repo_id, source, entity_type, entity_number, action, title, details)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertMany = getDb().transaction(() => {
+      for (const event of events) {
+        stmt.run(
+          repoId,
+          event.source || 'sync',
+          event.entity_type,
+          event.entity_number,
+          event.action,
+          event.title,
+          event.details,
+        );
+      }
+    });
+
+    insertMany();
   },
 };
