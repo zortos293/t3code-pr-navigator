@@ -1,16 +1,13 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { GitPullRequest, CircleDot, ArrowRight, Loader2, LayoutDashboard } from 'lucide-react';
 import ThemeToggle from './components/ThemeToggle';
-import RepoForm from './components/RepoForm';
 import Sidebar from './components/Sidebar';
 import Board from './components/Board';
 import BoardFilters from './components/BoardFilters';
-import ToastContainer from './components/Toast/ToastContainer';
 import { useRepos } from './hooks/useRepos';
 import { useBoard } from './hooks/useBoard';
-import { useSyncProgress } from './hooks/useSyncProgress';
 import {
   createEmptyPullRequestFilters,
   filterBoardByPullRequestFilters,
@@ -20,12 +17,9 @@ import {
 
 export default function Home() {
   const [selectedRepoId, setSelectedRepoId] = useState<number | null>(null);
-  const [syncingId, setSyncingId] = useState<number | null>(null);
-  const [analyzingId, setAnalyzingId] = useState<number | null>(null);
   const [pullRequestFilters, setPullRequestFilters] = useState(createEmptyPullRequestFilters);
 
-  const syncProgress = useSyncProgress();
-  const { repos, analysisProgress, addRepo, deleteRepo, syncRepo, analyzeRepo, refresh: refreshRepos } = useRepos(syncProgress);
+  const { repos } = useRepos();
   const board = useBoard(selectedRepoId);
 
   useEffect(() => {
@@ -61,41 +55,6 @@ export default function Home() {
       }),
     [pullRequestFilters.sizes, pullRequestFilters.visibility, pullRequestFilters.vouchStates, selectedRepoId]
   );
-
-  const handleAdd = useCallback(async (url: string) => {
-    const repo = await addRepo(url);
-    if (repo?.id) setSelectedRepoId(repo.id);
-  }, [addRepo]);
-
-  const handleDelete = useCallback(async (id: number) => {
-    await deleteRepo(id);
-    if (selectedRepoId === id) setSelectedRepoId(null);
-  }, [deleteRepo, selectedRepoId]);
-
-  const handleSync = useCallback(async (id: number) => {
-    setSyncingId(id);
-    try {
-      await syncRepo(id);
-      if (selectedRepoId === id) {
-        await board.refresh();
-      }
-    } finally {
-      setSyncingId(null);
-    }
-  }, [syncRepo, selectedRepoId, board]);
-
-  const handleAnalyze = useCallback(async (id: number) => {
-    setAnalyzingId(id);
-    try {
-      await analyzeRepo(id);
-      if (selectedRepoId === id) board.refresh();
-      await refreshRepos();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'OpenCode analysis failed');
-    } finally {
-      setAnalyzingId(null);
-    }
-  }, [analyzeRepo, selectedRepoId, board, refreshRepos]);
 
   return (
     <div className="h-screen flex flex-col">
@@ -145,17 +104,18 @@ export default function Home() {
 
       <div className="flex flex-1 min-h-0">
         <aside className="w-72 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col shrink-0">
-          <RepoForm onAdd={handleAdd} />
+          <div className="border-b border-gray-200 bg-slate-50/80 px-4 py-3 dark:border-gray-800 dark:bg-slate-950/60">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              Public demo
+            </p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              Repository management is hidden for now. Pick a repo below to explore the board.
+            </p>
+          </div>
           <Sidebar
             repos={repos}
             selectedId={selectedRepoId}
             onSelect={setSelectedRepoId}
-            onDelete={handleDelete}
-            onSync={handleSync}
-            onAnalyze={handleAnalyze}
-            syncingId={syncingId}
-            analyzingId={analyzingId}
-            analysisProgress={analysisProgress}
           />
         </aside>
 
@@ -170,8 +130,9 @@ export default function Home() {
                   Welcome to PR Navigator
                 </h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                  Add a GitHub repository to visualize issues and pull requests on an interactive board.
-                  Drag to connect issues with PRs that solve them.
+                  {repos.length > 0
+                    ? 'Select a repository from the sidebar to visualize issues and pull requests on an interactive board. Drag to connect issues with PRs that solve them.'
+                    : 'This public demo is currently in read-only mode. Demo repositories will appear in the sidebar when they are available.'}
                 </p>
                 <div className="flex items-center justify-center gap-6 text-xs text-gray-400 dark:text-gray-500">
                   <div className="flex items-center gap-1">
@@ -231,8 +192,6 @@ export default function Home() {
           )}
         </main>
       </div>
-
-      <ToastContainer toasts={syncProgress.toasts} />
     </div>
   );
 }
