@@ -615,7 +615,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
   const { issues: issuesDb, pullRequests: prsDb, relationships: relsDb, duplicates: dupsDb } = await import('./db');
 
   const analysisJobId = jobId ?? analysisJobs.create(repoId, 'analyze').id;
-  const allIssues = issuesDb.getOpenByRepoId(repoId);
+  const allIssues = issuesDb.getByRepoId(repoId);
   const allPRs = prsDb.getByRepoId(repoId);
   const relationshipBatches = buildRelationshipAnalysisBatches(allIssues, allPRs);
   const duplicateBatches = buildDuplicateAnalysisBatches(allIssues);

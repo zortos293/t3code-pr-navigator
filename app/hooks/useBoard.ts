@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { Issue, PullRequest } from '@/app/lib/db';
-import { projectRepoBoardData } from '@/app/lib/repoView';
-import type { ActivityEvent } from '@/app/lib/types';
 
 type Relationship = {
   id: number;
@@ -30,10 +28,7 @@ type BoardData = {
   pullRequests: PullRequest[];
   relationships: Relationship[];
   duplicates: Duplicate[];
-  activity: ActivityEvent[];
   repoFullName: string;
-  openPullRequestCount: number;
-  trackedPullRequestCount: number;
   loading: boolean;
 };
 
@@ -43,26 +38,13 @@ export function useBoard(repoId: number | null) {
     pullRequests: [],
     relationships: [],
     duplicates: [],
-    activity: [],
     repoFullName: '',
-    openPullRequestCount: 0,
-    trackedPullRequestCount: 0,
     loading: false,
   });
 
   const fetchBoard = useCallback(async () => {
     if (!repoId) {
-      setData({
-        issues: [],
-        pullRequests: [],
-        relationships: [],
-        duplicates: [],
-        activity: [],
-        repoFullName: '',
-        openPullRequestCount: 0,
-        trackedPullRequestCount: 0,
-        loading: false,
-      });
+      setData({ issues: [], pullRequests: [], relationships: [], duplicates: [], repoFullName: '', loading: false });
       return;
     }
 
@@ -71,20 +53,12 @@ export function useBoard(repoId: number | null) {
       const res = await fetch(`/api/repos/${repoId}`);
       if (!res.ok) throw new Error('Failed to fetch board data');
       const repo = await res.json();
-      const projection = projectRepoBoardData(
-        repo.issues || [],
-        repo.pull_requests || [],
-        repo.relationships || [],
-      );
       setData({
-        issues: projection.openIssues,
-        pullRequests: projection.visiblePullRequests,
-        relationships: projection.visibleRelationships,
+        issues: repo.issues || [],
+        pullRequests: repo.pull_requests || [],
+        relationships: repo.relationships || [],
         duplicates: repo.duplicates || [],
-        activity: repo.activity || [],
         repoFullName: repo.full_name || '',
-        openPullRequestCount: projection.openPullRequestCount,
-        trackedPullRequestCount: projection.trackedPullRequestCount,
         loading: false,
       });
     } catch {

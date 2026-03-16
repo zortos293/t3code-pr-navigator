@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { repos, issues, pullRequests, relationships, duplicates, activityEvents } from '@/app/lib/db';
+import { repos, issues, pullRequests, relationships, duplicates } from '@/app/lib/db';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -16,7 +16,6 @@ export async function GET(_request: NextRequest, { params }: Params) {
     const repoPRs = pullRequests.getByRepoId(repoId);
     const repoRelationships = relationships.getByRepoId(repoId);
     const repoDuplicates = duplicates.getByRepoId(repoId);
-    const repoActivity = activityEvents.getByRepoId(repoId);
 
     return NextResponse.json({
       ...repo,
@@ -24,7 +23,6 @@ export async function GET(_request: NextRequest, { params }: Params) {
       pull_requests: repoPRs,
       relationships: repoRelationships,
       duplicates: repoDuplicates,
-      activity: repoActivity,
     });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

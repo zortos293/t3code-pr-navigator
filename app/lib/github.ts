@@ -1,6 +1,5 @@
 import { Octokit } from '@octokit/rest';
 import { loadLocalEnv } from './serverEnv';
-import { buildSyncActivityEvents, buildSyncSummaryEvent } from './syncActivity';
 
 loadLocalEnv();
 
@@ -82,7 +81,7 @@ export async function fetchRepository(owner: string, name: string): Promise<GitH
   };
 }
 
-export async function fetchIssues(owner: string, name: string, state: 'open' | 'all' = 'open'): Promise<GitHubIssue[]> {
+export async function fetchIssues(owner: string, name: string): Promise<GitHubIssue[]> {
   const octokit = getOctokit();
   const allIssues: GitHubIssue[] = [];
   let page = 1;
@@ -91,7 +90,7 @@ export async function fetchIssues(owner: string, name: string, state: 'open' | '
     const { data } = await octokit.issues.listForRepo({
       owner,
       repo: name,
-      state,
+      state: 'open',
       per_page: 100,
       page,
     });
@@ -122,10 +121,6 @@ export async function fetchIssues(owner: string, name: string, state: 'open' | '
 }
 
 export async function fetchPullRequests(owner: string, name: string): Promise<GitHubPR[]> {
-  return fetchPullRequestList(owner, name, 'open');
-}
-
-export async function fetchPullRequestList(owner: string, name: string, state: 'open' | 'closed' | 'all'): Promise<GitHubPR[]> {
   const octokit = getOctokit();
   const allPRs: GitHubPR[] = [];
   let page = 1;
@@ -134,7 +129,7 @@ export async function fetchPullRequestList(owner: string, name: string, state: '
     const { data } = await octokit.pulls.list({
       owner,
       repo: name,
-      state,
+      state: 'open',
       per_page: 100,
       page,
     });
@@ -273,35 +268,19 @@ export async function syncRepository(
   name: string,
   onProgress?: SyncProgressCallback,
 ) {
-  const {
-    repos,
-    issues: issuesDb,
-    pullRequests: prsDb,
-    relationships: relationshipsDb,
-    activityEvents,
-  } = await import('./db');
+  const { repos, issues: issuesDb, pullRequests: prsDb, relationships: relationshipsDb } = await import('./db');
 
   const repoData = await fetchRepository(owner, name);
-  const existingIssues = issuesDb.getByRepoId(repoId);
-  const existingPullRequests = prsDb.getByRepoId(repoId);
   const [ghIssues, ghPRs] = await Promise.all([
-    fetchIssues(owner, name, 'all'),
-    fetchPullRequestList(owner, name, 'all'),
+    fetchIssues(owner, name),
+    fetchPullRequests(owner, name),
   ]);
-  const openIssuesCount = ghIssues.filter((issue) => issue.state === 'open').length;
-  const openPullRequestsCount = ghPRs.filter((pullRequest) => pullRequest.state === 'open').length;
-  const activityDrafts = buildSyncActivityEvents({
-    existingIssues,
-    existingPullRequests,
-    nextIssues: ghIssues,
-    nextPullRequests: ghPRs,
-  });
 
   repos.update(repoId, {
     description: repoData.description,
     stars: repoData.stargazers_count,
-    open_issues_count: openIssuesCount,
-    open_prs_count: openPullRequestsCount,
+    open_issues_count: ghIssues.length,
+    open_prs_count: ghPRs.length,
   });
 
   const issueMap = new Map<number, number>();
@@ -319,9 +298,7 @@ export async function syncRepository(
       updated_at: issue.updated_at,
       closed_at: issue.closed_at,
     });
-    if (issue.state === 'open') {
-      issueMap.set(issue.number, dbIssue.id);
-    }
+    issueMap.set(issue.number, dbIssue.id);
     await onProgress?.('issue', index + 1, ghIssues.length, issue);
   }
 
@@ -374,15 +351,8 @@ export async function syncRepository(
     }
   }
 
-  activityEvents.createMany(repoId, [
-    ...activityDrafts,
-    buildSyncSummaryEvent(activityDrafts, openIssuesCount, openPullRequestsCount, ghPRs.length),
-  ]);
-
   return {
-    issues: openIssuesCount,
-    pullRequests: openPullRequestsCount,
-    trackedPullRequests: ghPRs.length,
-    activityCount: activityDrafts.length + 1,
+    issues: ghIssues.length,
+    pullRequests: ghPRs.length,
   };
 }
