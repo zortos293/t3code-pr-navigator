@@ -3,3 +3,6 @@ node_modules/
 data/*.db
 .env.local
 *.tsbuildinfo
+/board-*.png
+/detail-panel-test.png
+/pr-detail-panel.png
