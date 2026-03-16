@@ -35,6 +35,16 @@ type Props = {
   onDeleteRelationship?: (id: number) => void;
 };
 
+type BoardEdgeData = {
+  relationshipType: string;
+  confidence: number;
+  relationshipId: number;
+  labelSlot: number;
+  hideLabel?: boolean;
+};
+
+type BoardEdge = Edge<BoardEdgeData>;
+
 /* ── Cluster group background node ──────────────────────────── */
 
 type ClusterGroupData = { width: number; height: number };
@@ -75,27 +85,55 @@ export default function Board({
 }: Props) {
   const [hasUserMoved, setHasUserMoved] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<DetailItem | null>(null);
+  const [isDraggingNode, setIsDraggingNode] = useState(false);
 
   const initialNodes = useMemo(
     () => buildClusteredNodes(issues, pullRequests, relationships, repoFullName),
     [issues, pullRequests, relationships, repoFullName]
   );
 
-  const initialEdges = useMemo(
-    () =>
-      relationships.map((rel) => ({
+  const initialEdges = useMemo<BoardEdge[]>(
+    () => {
+      const nodePositions = new Map(
+        initialNodes.map((node) => [node.id, node.position] as const)
+      );
+      const relationshipsByTarget = new Map<number, typeof relationships>();
+
+      for (const relationship of relationships) {
+        const bucket = relationshipsByTarget.get(relationship.pr_id) ?? [];
+        bucket.push(relationship);
+        relationshipsByTarget.set(relationship.pr_id, bucket);
+      }
+
+      const labelSlots = new Map<number, number>();
+      for (const group of relationshipsByTarget.values()) {
+        const sortedGroup = [...group].sort((a, b) => {
+          const aY = nodePositions.get(`issue-${a.issue_id}`)?.y ?? 0;
+          const bY = nodePositions.get(`issue-${b.issue_id}`)?.y ?? 0;
+          return aY - bY;
+        });
+        const center = (sortedGroup.length - 1) / 2;
+        sortedGroup.forEach((relationship, index) => {
+          labelSlots.set(relationship.id, index - center);
+        });
+      }
+
+      return relationships.map((rel) => ({
         id: `rel-${rel.id}`,
         source: `issue-${rel.issue_id}`,
         target: `pr-${rel.pr_id}`,
         type: 'custom',
+        zIndex: 1000,
         markerEnd: { type: MarkerType.ArrowClosed, color: '#8b5cf6' },
         data: {
-          label: rel.relationship_type === 'solves' ? 'solved by' : rel.relationship_type,
+          relationshipType: rel.relationship_type,
           confidence: rel.confidence,
           relationshipId: rel.id,
+          labelSlot: labelSlots.get(rel.id) ?? 0,
         },
-      })),
-    [relationships]
+      }));
+    },
+    [initialNodes, relationships]
   );
 
   const fitViewNodeIds = useMemo(() => {
@@ -109,7 +147,27 @@ export default function Board({
   }, [relationships]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<BoardEdge>(initialEdges);
+  const renderedEdges = useMemo<BoardEdge[]>(
+    () =>
+      edges.map((edge) => {
+        const edgeData = edge.data ?? {
+          relationshipType: 'solves',
+          confidence: 1,
+          relationshipId: 0,
+          labelSlot: 0,
+        };
+
+        return {
+          ...edge,
+          data: {
+            ...edgeData,
+            hideLabel: isDraggingNode,
+          },
+        };
+      }),
+    [edges, isDraggingNode]
+  );
 
   useEffect(() => {
     setNodes(initialNodes);
@@ -175,8 +233,9 @@ export default function Board({
           {
             ...params,
             type: 'custom',
+            zIndex: 1000,
             markerEnd: { type: MarkerType.ArrowClosed, color: '#8b5cf6' },
-            data: { label: 'solved by', confidence: 1, relationshipId: 0 },
+            data: { relationshipType: 'solves', confidence: 1, relationshipId: 0, labelSlot: 0 },
           },
           eds
         )
@@ -203,12 +262,16 @@ export default function Board({
     <div className="w-full h-full relative">
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={renderedEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onEdgesDelete={onEdgesDelete}
-        onNodeDragStop={() => setHasUserMoved(true)}
+        onNodeDragStart={() => setIsDraggingNode(true)}
+        onNodeDragStop={() => {
+          setIsDraggingNode(false);
+          setHasUserMoved(true);
+        }}
         onNodeClick={handleNodeClick}
         onPaneClick={handlePaneClick}
         nodeTypes={nodeTypes}
@@ -218,6 +281,7 @@ export default function Board({
         minZoom={0.05}
         maxZoom={2}
         deleteKeyCode="Delete"
+        onlyRenderVisibleElements
         className="bg-gray-50 dark:bg-gray-950"
       >
         {hasUserMoved && (
@@ -234,17 +298,19 @@ export default function Board({
         )}
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-30" />
         <Controls className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 !shadow-lg !rounded-lg [&>button]:!bg-white dark:[&>button]:!bg-gray-800 [&>button]:!border-gray-200 dark:[&>button]:!border-gray-700 [&>button]:!text-gray-600 dark:[&>button]:!text-gray-400 [&>button:hover]:!bg-gray-50 dark:[&>button:hover]:!bg-gray-700" />
-        <MiniMap
-          className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 !shadow-lg !rounded-lg"
-          nodeColor={(node) => {
-            if (node.type === 'issue') return '#22c55e';
-            if (node.type === 'pr') return '#a855f7';
-            if (node.type === 'lane-header') return 'transparent';
-            if (node.type === 'cluster-group') return 'transparent';
-            return '#6b7280';
-          }}
-          maskColor="rgba(0,0,0,0.1)"
-        />
+        {!isDraggingNode && (
+          <MiniMap
+            className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 !shadow-lg !rounded-lg"
+            nodeColor={(node) => {
+              if (node.type === 'issue') return '#22c55e';
+              if (node.type === 'pr') return '#a855f7';
+              if (node.type === 'lane-header') return 'transparent';
+              if (node.type === 'cluster-group') return 'transparent';
+              return '#6b7280';
+            }}
+            maskColor="rgba(0,0,0,0.1)"
+          />
+        )}
       </ReactFlow>
 
       <DetailPanel

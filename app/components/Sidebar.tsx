@@ -87,7 +87,7 @@ export default function Sidebar({
                     onClick={(e) => { e.stopPropagation(); onAnalyze(repo.id); }}
                     disabled={isAnalyzing}
                     className="p-1 text-gray-400 hover:text-purple-500 rounded transition-colors"
-                    title="AI Analysis"
+                    title="OpenCode Analysis"
                   >
                     {isAnalyzing ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   </button>

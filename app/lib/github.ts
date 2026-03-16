@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import type { Issue, PullRequest } from './db';
 import { loadLocalEnv } from './serverEnv';
 
 loadLocalEnv();
@@ -173,10 +174,21 @@ export async function fetchPRDetails(owner: string, name: string, prNumber: numb
 }
 
 const SOLVES_KEYWORDS = new Set(['fixes', 'fix', 'closes', 'close', 'resolves', 'resolve']);
+const SUPERSEDES_KEYWORDS = new Set([
+  'supersedes',
+  'supersede',
+  'superseded by',
+  'supercedes',
+  'supercede',
+  'superceded by',
+  'superseeds',
+  'superseed',
+  'superseeded by',
+]);
 
-export function extractIssueReferences(text: string): { issueNumber: number; type: 'solves' | 'relates' }[] {
-  const pattern = /(fixes|fix|closes|close|resolves|resolve|relates\s+to|related\s+to|addresses|refs|references)\s+(?:#|https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/)(\d+)/gi;
-  const results: { issueNumber: number; type: 'solves' | 'relates' }[] = [];
+export function extractIssueReferences(text: string): { issueNumber: number; type: 'solves' | 'relates' | 'supersedes' }[] {
+  const pattern = /(fixes|fix|closes|close|resolves|resolve|relates\s+to|related\s+to|addresses|refs|references|supersedes|supersede|superseded\s+by|supercedes|supercede|superceded\s+by|superseeds|superseed|superseeded\s+by)\s+(?:#|https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/)(\d+)/gi;
+  const results: { issueNumber: number; type: 'solves' | 'relates' | 'supersedes' }[] = [];
   const seen = new Set<number>();
 
   let match;
@@ -185,7 +197,11 @@ export function extractIssueReferences(text: string): { issueNumber: number; typ
     if (seen.has(issueNumber)) continue;
     seen.add(issueNumber);
     const keyword = match[1].replace(/\s+/g, ' ').toLowerCase();
-    const type = SOLVES_KEYWORDS.has(keyword) ? 'solves' : 'relates';
+    const type = SOLVES_KEYWORDS.has(keyword)
+      ? 'solves'
+      : SUPERSEDES_KEYWORDS.has(keyword)
+        ? 'supersedes'
+        : 'relates';
     results.push({ issueNumber, type });
   }
 
@@ -262,21 +278,75 @@ export async function fetchComments(
   }
 }
 
+export function buildClosedIssueUpdates(
+  issues: Issue[],
+  openGitHubIssueNumbers: Set<number>,
+  syncedAt: string
+): Array<Omit<Issue, 'id'>> {
+  return issues
+    .filter((issue) => issue.state === 'open' && !openGitHubIssueNumbers.has(issue.github_number))
+    .map((issue) => ({
+      repo_id: issue.repo_id,
+      github_number: issue.github_number,
+      title: issue.title,
+      body: issue.body,
+      state: 'closed',
+      author: issue.author,
+      author_avatar: issue.author_avatar,
+      labels: issue.labels,
+      created_at: issue.created_at,
+      updated_at: syncedAt,
+      closed_at: issue.closed_at ?? syncedAt,
+    }));
+}
+
+export function buildClosedPullRequestUpdates(
+  pullRequests: PullRequest[],
+  openGitHubPullRequestNumbers: Set<number>,
+  syncedAt: string
+): Array<Omit<PullRequest, 'id'>> {
+  return pullRequests
+    .filter((pullRequest) => pullRequest.state === 'open' && !openGitHubPullRequestNumbers.has(pullRequest.github_number))
+    .map((pullRequest) => ({
+      repo_id: pullRequest.repo_id,
+      github_number: pullRequest.github_number,
+      title: pullRequest.title,
+      body: pullRequest.body,
+      state: 'closed',
+      author: pullRequest.author,
+      author_avatar: pullRequest.author_avatar,
+      labels: pullRequest.labels,
+      additions: pullRequest.additions,
+      deletions: pullRequest.deletions,
+      changed_files: pullRequest.changed_files,
+      draft: pullRequest.draft,
+      created_at: pullRequest.created_at,
+      updated_at: syncedAt,
+      merged_at: pullRequest.merged_at,
+      closed_at: pullRequest.closed_at ?? syncedAt,
+    }));
+}
+
 export async function syncRepository(
   repoId: number,
   owner: string,
   name: string,
   onProgress?: SyncProgressCallback,
 ) {
-  const { repos, issues: issuesDb, pullRequests: prsDb, relationships: relationshipsDb } = await import('./db');
+  const { commentCaches, repos, issues: issuesDb, pullRequests: prsDb, relationships: relationshipsDb } = await import('./db');
 
   const repoData = await fetchRepository(owner, name);
-  const [ghIssues, ghPRs] = await Promise.all([
+  const [existingIssues, existingPullRequests, ghIssues, ghPRs] = await Promise.all([
+    issuesDb.getByRepoId(repoId),
+    prsDb.getByRepoId(repoId),
     fetchIssues(owner, name),
     fetchPullRequests(owner, name),
   ]);
+  const syncedAt = new Date().toISOString();
 
-  repos.update(repoId, {
+  await commentCaches.deleteByRepoId(repoId);
+
+  await repos.update(repoId, {
     description: repoData.description,
     stars: repoData.stargazers_count,
     open_issues_count: ghIssues.length,
@@ -284,8 +354,9 @@ export async function syncRepository(
   });
 
   const issueMap = new Map<number, number>();
+  const openIssueNumbers = new Set(ghIssues.map((issue) => issue.number));
   for (const [index, issue] of ghIssues.entries()) {
-    const dbIssue = issuesDb.upsert({
+    const dbIssue = await issuesDb.upsert({
       repo_id: repoId,
       github_number: issue.number,
       title: issue.title,
@@ -302,7 +373,12 @@ export async function syncRepository(
     await onProgress?.('issue', index + 1, ghIssues.length, issue);
   }
 
+  for (const closedIssue of buildClosedIssueUpdates(existingIssues, openIssueNumbers, syncedAt)) {
+    await issuesDb.upsert(closedIssue);
+  }
+
   const prMap = new Map<number, number>();
+  const openPullRequestNumbers = new Set(ghPRs.map((pr) => pr.number));
   for (const [index, pr] of ghPRs.entries()) {
     let details = { additions: 0, deletions: 0, changed_files: 0 };
     try {
@@ -310,7 +386,7 @@ export async function syncRepository(
     } catch {
     }
 
-    const dbPR = prsDb.upsert({
+    const dbPR = await prsDb.upsert({
       repo_id: repoId,
       github_number: pr.number,
       title: pr.title,
@@ -332,6 +408,10 @@ export async function syncRepository(
     await onProgress?.('pr', index + 1, ghPRs.length, pr);
   }
 
+  for (const closedPullRequest of buildClosedPullRequestUpdates(existingPullRequests, openPullRequestNumbers, syncedAt)) {
+    await prsDb.upsert(closedPullRequest);
+  }
+
   for (const pr of ghPRs) {
     const text = pr.title + ' ' + (pr.body || '');
     const refs = extractIssueReferences(text);
@@ -341,7 +421,7 @@ export async function syncRepository(
     for (const ref of refs) {
       const issueDbId = issueMap.get(ref.issueNumber);
       if (issueDbId) {
-        relationshipsDb.create({
+        await relationshipsDb.create({
           issue_id: issueDbId,
           pr_id: prDbId,
           relationship_type: ref.type,

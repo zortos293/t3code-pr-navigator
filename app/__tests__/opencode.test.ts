@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildDuplicateAnalysisBatches,
   buildRelationshipAnalysisBatches,
   chunkItems,
   extractJsonPayload,
+  getAnalysisCandidates,
+  isRetryableOpenCodeError,
   parseModelJsonResponse,
+  retryOpenCodeRequest,
 } from '../lib/opencode';
 import type { Issue, PullRequest } from '../lib/db';
 
@@ -88,6 +91,30 @@ describe('duplicate batching', () => {
   });
 });
 
+describe('analysis candidate selection', () => {
+  it('only analyzes open issues and PRs that are not already linked to another open item', () => {
+    const issue1 = createIssue(1);
+    const issue2 = createIssue(2);
+    const issue3 = createIssue(3, { state: 'closed', closed_at: '2026-01-01T00:00:00.000Z' });
+    const pr1 = createPullRequest(101);
+    const pr2 = createPullRequest(102);
+    const pr3 = createPullRequest(103, { state: 'closed', closed_at: '2026-01-01T00:00:00.000Z' });
+
+    const result = getAnalysisCandidates(
+      [issue1, issue2, issue3],
+      [pr1, pr2, pr3],
+      [
+        { issue_id: issue1.id, pr_id: pr1.id },
+        { issue_id: issue2.id, pr_id: pr3.id },
+      ]
+    );
+
+    expect(result.issuesToAnalyze.map((issue) => issue.id)).toEqual([issue2.id]);
+    expect(result.pullRequestsToAnalyze.map((pullRequest) => pullRequest.id)).toEqual([pr2.id]);
+    expect(result.activeRelationships).toEqual([{ issue_id: issue1.id, pr_id: pr1.id }]);
+  });
+});
+
 describe('model JSON parsing', () => {
   it('extracts fenced JSON payloads', () => {
     const payload = extractJsonPayload('```json\n{"matches":[{"issue_number":1}]}\n```');
@@ -100,5 +127,33 @@ describe('model JSON parsing', () => {
     );
 
     expect(parsed).toEqual({ duplicates: [{ issue_number: 1 }] });
+  });
+});
+
+describe('OpenCode retries', () => {
+  it('retries retryable request failures up to two additional times', async () => {
+    const operation = vi.fn<() => Promise<string>>()
+      .mockRejectedValueOnce(Object.assign(new Error('OpenCode Go request timed out after 90 seconds'), { retryable: true }))
+      .mockRejectedValueOnce(Object.assign(new Error('network failure'), { retryable: true }))
+      .mockResolvedValue('ok');
+
+    await expect(retryOpenCodeRequest(operation, { delayMs: 0 })).resolves.toBe('ok');
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry non-retryable failures', async () => {
+    const operation = vi.fn<() => Promise<string>>()
+      .mockRejectedValue(new Error('OpenCode Go returned an empty response'));
+
+    await expect(retryOpenCodeRequest(operation, { delayMs: 0 })).rejects.toThrow(
+      'OpenCode Go returned an empty response'
+    );
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it('detects retryable timeout and network errors', () => {
+    expect(isRetryableOpenCodeError(new Error('OpenCode Go request timed out after 90 seconds'))).toBe(true);
+    expect(isRetryableOpenCodeError(new Error('fetch failed'))).toBe(true);
+    expect(isRetryableOpenCodeError(new Error('OpenCode Go returned an empty response'))).toBe(false);
   });
 });

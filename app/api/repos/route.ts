@@ -4,7 +4,7 @@ import { parseGitHubUrl, fetchRepository, syncRepository } from '@/app/lib/githu
 
 export async function GET() {
   try {
-    const allRepos = repos.getAll();
+    const allRepos = await repos.getAll();
     return NextResponse.json(allRepos);
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
@@ -25,14 +25,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid GitHub URL' }, { status: 400 });
     }
 
-    const existing = repos.getByFullName(`${parsed.owner}/${parsed.name}`);
+    const existing = await repos.getByFullName(`${parsed.owner}/${parsed.name}`);
     if (existing) {
       return NextResponse.json({ error: 'Repository already added', repo: existing }, { status: 409 });
     }
 
     const ghRepo = await fetchRepository(parsed.owner, parsed.name);
 
-    const repo = repos.create({
+    const repo = await repos.create({
       owner: ghRepo.owner,
       name: ghRepo.name,
       full_name: ghRepo.full_name,
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     });
 
     const counts = await syncRepository(repo.id, repo.owner, repo.name);
-    const updated = repos.update(repo.id, {
+    const updated = await repos.update(repo.id, {
       open_issues_count: counts.issues,
       open_prs_count: counts.pullRequests,
     });

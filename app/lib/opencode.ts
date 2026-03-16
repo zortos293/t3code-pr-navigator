@@ -1,4 +1,5 @@
 import { analysisJobs, type Issue, type PullRequest } from './db';
+import { parseLabels } from './parseLabels';
 import { loadLocalEnv } from './serverEnv';
 
 loadLocalEnv();
@@ -47,6 +48,35 @@ type DuplicateBatch = {
   comparisonIssues: Issue[];
 };
 
+type ExistingRelationship = {
+  issue_id: number;
+  pr_id: number;
+};
+
+export function getAnalysisCandidates(
+  issues: Issue[],
+  pullRequests: PullRequest[],
+  relationships: ExistingRelationship[]
+) {
+  const openIssues = issues.filter((issue) => issue.state === 'open');
+  const openPullRequests = pullRequests.filter((pullRequest) => pullRequest.state === 'open');
+  const openIssueIds = new Set(openIssues.map((issue) => issue.id));
+  const openPullRequestIds = new Set(openPullRequests.map((pullRequest) => pullRequest.id));
+  const activeRelationships = relationships.filter(
+    (relationship) =>
+      openIssueIds.has(relationship.issue_id) &&
+      openPullRequestIds.has(relationship.pr_id)
+  );
+  const linkedIssueIds = new Set(activeRelationships.map((relationship) => relationship.issue_id));
+  const linkedPullRequestIds = new Set(activeRelationships.map((relationship) => relationship.pr_id));
+
+  return {
+    issuesToAnalyze: openIssues.filter((issue) => !linkedIssueIds.has(issue.id)),
+    pullRequestsToAnalyze: openPullRequests.filter((pullRequest) => !linkedPullRequestIds.has(pullRequest.id)),
+    activeRelationships,
+  };
+}
+
 type OpenCodeGoTextPart = {
   type?: string;
   text?: string;
@@ -69,6 +99,8 @@ const MAX_DUPLICATE_PROMPT_CHARS = 24_000;
 const RELATIONSHIP_CONFIDENCE_THRESHOLD = 0.5;
 const DUPLICATE_CONFIDENCE_THRESHOLD = 0.6;
 const OPENCODE_TIMEOUT_MS = 90_000;
+const OPENCODE_MAX_RETRIES = 2;
+const OPENCODE_RETRY_DELAY_MS = 1_000;
 const TITLE_LIMIT = 72;
 const ISSUE_BODY_LIMIT = 56;
 const PR_BODY_LIMIT = 56;
@@ -77,6 +109,8 @@ const LABEL_NAME_LIMIT = 20;
 const OPENCODE_GO_ENDPOINT = process.env.OPENCODE_GO_ENDPOINT?.trim() || 'https://opencode.ai/zen/go/v1/chat/completions';
 const OPENCODE_GO_MODEL = process.env.OPENCODE_GO_MODEL?.trim() || 'kimi-k2.5';
 const SYSTEM_MESSAGE = 'You analyze GitHub issues and pull requests. Respond with valid JSON only and never wrap it in markdown.';
+
+type RetryableOpenCodeError = Error & { retryable?: boolean };
 
 function getOpenCodeApiKey(): string {
   loadLocalEnv();
@@ -108,7 +142,58 @@ function extractAssistantContent(content: string | OpenCodeGoTextPart[] | null |
   return text.length > 0 ? text : null;
 }
 
-async function callOpenCodeGoAPI(prompt: string): Promise<string> {
+function markRetryable(error: Error): RetryableOpenCodeError {
+  const retryableError = error as RetryableOpenCodeError;
+  retryableError.retryable = true;
+  return retryableError;
+}
+
+export function isRetryableOpenCodeError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if ((error as RetryableOpenCodeError).retryable) {
+    return true;
+  }
+
+  return /\b(?:timed out|timeout|network|fetch failed|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH)\b/i.test(error.message);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export async function retryOpenCodeRequest<T>(
+  operation: () => Promise<T>,
+  options?: {
+    retries?: number;
+    delayMs?: number;
+    shouldRetry?: (error: unknown) => boolean;
+  }
+): Promise<T> {
+  const retries = options?.retries ?? OPENCODE_MAX_RETRIES;
+  const delayMs = options?.delayMs ?? OPENCODE_RETRY_DELAY_MS;
+  const shouldRetry = options?.shouldRetry ?? isRetryableOpenCodeError;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= retries || !shouldRetry(error)) {
+        throw error;
+      }
+
+      if (delayMs > 0) {
+        await delay(delayMs);
+      }
+    }
+  }
+}
+
+async function executeOpenCodeGoAPI(prompt: string): Promise<string> {
   const apiKey = getOpenCodeApiKey();
 
   try {
@@ -141,7 +226,10 @@ async function callOpenCodeGoAPI(prompt: string): Promise<string> {
 
     if (!response.ok) {
       const message = parsedResponse?.error?.message?.trim() || responseText.trim() || response.statusText;
-      throw new Error(`OpenCode Go request failed (${response.status}): ${message}`);
+      const requestError = new Error(`OpenCode Go request failed (${response.status}): ${message}`);
+      throw response.status >= 500 || response.status === 408 || response.status === 429
+        ? markRetryable(requestError)
+        : requestError;
     }
 
     const content = extractAssistantContent(parsedResponse?.choices?.[0]?.message?.content);
@@ -152,11 +240,19 @@ async function callOpenCodeGoAPI(prompt: string): Promise<string> {
     return content;
   } catch (error) {
     if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
-      throw new Error(`OpenCode Go request timed out after ${OPENCODE_TIMEOUT_MS / 1000} seconds`);
+      throw markRetryable(new Error(`OpenCode Go request timed out after ${OPENCODE_TIMEOUT_MS / 1000} seconds`));
+    }
+
+    if (error instanceof TypeError) {
+      throw markRetryable(new Error(`OpenCode Go request failed: ${error.message}`));
     }
 
     throw error;
   }
+}
+
+async function callOpenCodeGoAPI(prompt: string): Promise<string> {
+  return retryOpenCodeRequest(() => executeOpenCodeGoAPI(prompt));
 }
 
 function normalizeWhitespace(value: string | null | undefined): string {
@@ -170,22 +266,6 @@ function truncateText(value: string | null | undefined, maxLength: number): stri
   }
 
   return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
-}
-
-function parseLabels(value: string | null): string[] {
-  if (!value) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(value);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter((label): label is string => typeof label === 'string');
-  } catch {
-    return [];
-  }
 }
 
 function compactLabels(value: string | null): string[] {
@@ -614,11 +694,20 @@ function calculateProgress(completedBatches: number, totalBatches: number): numb
 export async function runAnalysis(repoId: number, jobId?: number) {
   const { issues: issuesDb, pullRequests: prsDb, relationships: relsDb, duplicates: dupsDb } = await import('./db');
 
-  const analysisJobId = jobId ?? analysisJobs.create(repoId, 'analyze').id;
-  const allIssues = issuesDb.getByRepoId(repoId);
-  const allPRs = prsDb.getByRepoId(repoId);
-  const relationshipBatches = buildRelationshipAnalysisBatches(allIssues, allPRs);
-  const duplicateBatches = buildDuplicateAnalysisBatches(allIssues);
+  const analysisJobId = jobId ?? (await analysisJobs.create(repoId, 'analyze')).id;
+  const [allIssues, allPRs, existingRelationships, existingDuplicates] = await Promise.all([
+    issuesDb.getByRepoId(repoId),
+    prsDb.getByRepoId(repoId),
+    relsDb.getByRepoId(repoId),
+    dupsDb.getByRepoId(repoId),
+  ]);
+  const { issuesToAnalyze, pullRequestsToAnalyze, activeRelationships } = getAnalysisCandidates(
+    allIssues,
+    allPRs,
+    existingRelationships
+  );
+  const relationshipBatches = buildRelationshipAnalysisBatches(issuesToAnalyze, pullRequestsToAnalyze);
+  const duplicateBatches = buildDuplicateAnalysisBatches(issuesToAnalyze);
   const totalBatches = relationshipBatches.length + duplicateBatches.length;
   let completedBatches = 0;
   let relationshipsCreated = 0;
@@ -626,7 +715,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
 
   try {
     if (totalBatches === 0) {
-      analysisJobs.update(analysisJobId, {
+      await analysisJobs.update(analysisJobId, {
         status: 'completed',
         progress: 100,
         result: JSON.stringify({ relationshipsCreated: 0, duplicatesCreated: 0, totalBatches: 0 }),
@@ -634,17 +723,29 @@ export async function runAnalysis(repoId: number, jobId?: number) {
         error: null,
       });
 
-      return analysisJobs.getByRepoId(repoId).find((job) => job.id === analysisJobId);
+      return (await analysisJobs.getByRepoId(repoId)).find((job) => job.id === analysisJobId);
     }
 
-    analysisJobs.update(analysisJobId, {
+    await analysisJobs.update(analysisJobId, {
       progress: calculateProgress(0, totalBatches),
       error: null,
     });
 
-    const issueByNumber = new Map(allIssues.map((issue) => [issue.github_number, issue] as const));
-    const prByNumber = new Map(allPRs.map((pr) => [pr.github_number, pr] as const));
-    const seenDuplicatePairs = new Set<string>();
+    const issueByNumber = new Map(issuesToAnalyze.map((issue) => [issue.github_number, issue] as const));
+    const prByNumber = new Map(pullRequestsToAnalyze.map((pr) => [pr.github_number, pr] as const));
+    const seenRelationshipPairs = new Set(
+      activeRelationships.map((relationship) => `${relationship.issue_id}:${relationship.pr_id}`)
+    );
+    const analyzableIssueIds = new Set(issuesToAnalyze.map((issue) => issue.id));
+    const seenDuplicatePairs = new Set(
+      existingDuplicates
+        .filter(
+          (duplicate) =>
+            analyzableIssueIds.has(duplicate.original_issue_id) &&
+            analyzableIssueIds.has(duplicate.duplicate_issue_id)
+        )
+        .map((duplicate) => `${duplicate.original_issue_id}:${duplicate.duplicate_issue_id}`)
+    );
 
     for (const batch of relationshipBatches) {
       const matches = await analyzeRelationshipBatch(batch);
@@ -660,7 +761,13 @@ export async function runAnalysis(repoId: number, jobId?: number) {
           continue;
         }
 
-        relsDb.create({
+        const pairKey = `${issue.id}:${pr.id}`;
+        if (seenRelationshipPairs.has(pairKey)) {
+          continue;
+        }
+        seenRelationshipPairs.add(pairKey);
+
+        await relsDb.create({
           issue_id: issue.id,
           pr_id: pr.id,
           relationship_type: 'solves',
@@ -670,7 +777,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
       }
 
       completedBatches++;
-      analysisJobs.update(analysisJobId, {
+      await analysisJobs.update(analysisJobId, {
         progress: calculateProgress(completedBatches, totalBatches),
       });
     }
@@ -695,7 +802,7 @@ export async function runAnalysis(repoId: number, jobId?: number) {
         }
         seenDuplicatePairs.add(pairKey);
 
-        dupsDb.create({
+        await dupsDb.create({
           original_issue_id: Math.min(issue.id, duplicateIssue.id),
           duplicate_issue_id: Math.max(issue.id, duplicateIssue.id),
           confidence: match.confidence,
@@ -705,12 +812,12 @@ export async function runAnalysis(repoId: number, jobId?: number) {
       }
 
       completedBatches++;
-      analysisJobs.update(analysisJobId, {
+      await analysisJobs.update(analysisJobId, {
         progress: calculateProgress(completedBatches, totalBatches),
       });
     }
 
-    analysisJobs.update(analysisJobId, {
+    await analysisJobs.update(analysisJobId, {
       status: 'completed',
       progress: 100,
       result: JSON.stringify({
@@ -723,14 +830,14 @@ export async function runAnalysis(repoId: number, jobId?: number) {
       error: null,
     });
   } catch (error) {
-    analysisJobs.update(analysisJobId, {
+    await analysisJobs.update(analysisJobId, {
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
       completed_at: new Date().toISOString(),
     });
   }
 
-  return analysisJobs.getByRepoId(repoId).find((job) => job.id === analysisJobId);
+  return (await analysisJobs.getByRepoId(repoId)).find((job) => job.id === analysisJobId);
 }
 
 export async function isOpenCodeConfigured(): Promise<boolean> {
